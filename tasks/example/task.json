@@ -1,0 +1,14 @@
+{
+  "id": "example",
+  "name": "示例任务",
+  "description": "用于验证任务执行与日志；可删除此示例。",
+  "enabled": false,
+  "command": ["{python}", "main.py"],
+  "cwd": "tasks/example",
+  "schedule": {"kind": "manual"},
+  "timeout_seconds": 30,
+  "max_attempts": 1,
+  "resource_group": "",
+  "daily_once": false,
+  "env_names": []
+}
