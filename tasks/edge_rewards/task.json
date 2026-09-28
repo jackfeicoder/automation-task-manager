@@ -1,0 +1,14 @@
+{
+  "id": "edge-rewards",
+  "name": "Edge Microsoft Rewards",
+  "description": "Edge 积分任务；启动前检查 VPN、代理及出口地区，异常即停止。首次先运行本地登录命令。",
+  "enabled": false,
+  "command": ["{python}", "main.py", "--run"],
+  "cwd": "tasks/edge_rewards",
+  "schedule": {"kind": "daily", "time": "10:00", "timezone": "Asia/Shanghai"},
+  "timeout_seconds": 1800,
+  "max_attempts": 1,
+  "resource_group": "edge-rewards-local-account",
+  "daily_once": false,
+  "env_names": ["REWARDS_COUNTRY_CODE", "REWARDS_SEARCH_COUNT", "REWARDS_SEARCH_INTERVAL", "REWARDS_ACTION_WAIT", "REWARDS_MAX_ACTIVITIES", "REWARDS_HEADLESS"]
+}

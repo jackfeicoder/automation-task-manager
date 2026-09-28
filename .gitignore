@@ -14,6 +14,8 @@
 **/session.json
 **/storage-state.json
 **/storage_state.json
+**/auth*.json
+**/cookies*.txt
 **/workbuddy-desktop.info
 **/profiles/
 *.pem

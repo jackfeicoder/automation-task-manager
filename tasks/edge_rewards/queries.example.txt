@@ -1,0 +1,4 @@
+# 复制到 data/rewards/queries.txt，然后填写你实际需要查询的内容，每行一个。
+Python 虚拟环境如何管理
+Windows 定时任务配置方法
+Microsoft Edge 浏览器快捷键

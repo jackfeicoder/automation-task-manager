@@ -1,2 +1,2 @@
 -r requirements.lock.txt
-playwright==1.63.0
+-r requirements-browser.txt

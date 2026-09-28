@@ -1,6 +1,6 @@
 # Task Harbor · 自动化任务管理
 
-Task Harbor 是运行在本机的自动化任务管理平台。通过网页管理多个脚本的执行时间、运行状态和配置，适合每日签到、周期性脚本和其他重复任务。内置 WorkBuddy 每日签到插件。
+Task Harbor 是运行在本机的自动化任务管理平台。通过网页管理多个脚本的执行时间、运行状态和配置，适合每日签到、周期性脚本和其他重复任务。内置 WorkBuddy 每日签到和 Edge Microsoft Rewards 插件。
 
 ## 功能
 
@@ -14,6 +14,7 @@ Task Harbor 是运行在本机的自动化任务管理平台。通过网页管�
 - **运行环境**：使用 Python venv，支持本地环境变量配置，变量值保存后不回显。
 - **脚本扩展**：扫描插件目录发现新任务，在界面创建、修改脚本；修改前备份，Python 脚本保存时检查语法。
 - **WorkBuddy 签到**：读取本机客户端登录状态，执行每日签到，显示成功、今日已完成或需要重新登录等结果。
+- **Edge Rewards**：使用独立 Edge 登录状态，执行支持的积分活动与桌面搜索，核对积分变化；启动前检查 VPN、代理和出口地区，运行中持续复查。
 
 ## 部署
 
@@ -66,6 +67,49 @@ cd automation-task-manager
 3. 在任务列表中运行 WorkBuddy 签到，或开启定时执行。
 
 默认执行时间为每天 **09:00，Asia/Shanghai**。登录过期时，在客户端重新登录后运行任务。实际积分以服务端返回结果为准，客户端接口发生变化时需要更新插件。
+
+### Edge Microsoft Rewards
+
+首次安装浏览器依赖（本机需已安装 Microsoft Edge）：
+
+```powershell
+./scripts/setup.ps1 -Browser
+```
+
+退出 VPN / 代理程序，关闭 Windows 系统代理、PAC 和「自动检测设置」。任务默认按中国大陆 `CN` 检查出口；其他实际所在地区在「运行环境」设置 `REWARDS_COUNTRY_CODE`。
+
+首次手动登录：
+
+```powershell
+./.venv/Scripts/python.exe tasks/edge_rewards/main.py --login
+```
+
+网络检查通过后会打开独立 Edge 窗口，由你手动登录微软账号。登录状态只保存在本机 `data/profiles/edge-rewards/`，与日常 Edge 配置分开。
+
+创建搜索词文件，每行填写一个需要查询的内容：
+
+```powershell
+New-Item -ItemType Directory -Force data/rewards
+Copy-Item tasks/edge_rewards/queries.example.txt data/rewards/queries.txt
+notepad data/rewards/queries.txt
+```
+
+在网页点击「扫描插件」，找到 **Edge Microsoft Rewards** 后手动运行。任务默认关闭定时；按需开启，默认时间为每天 10:00。默认每次最多搜索 10 个词，间隔 15 秒。任务只处理支持的可见搜索类积分活动；问答、拼图、移动端和其他活动需手动完成。积分增长未确认时停止后续操作。
+
+| 运行环境变量 | 默认值 | 用途 |
+|---|---|---|
+| `REWARDS_COUNTRY_CODE` | `CN` | 实际所在地区的两字母代码 |
+| `REWARDS_SEARCH_COUNT` | `10` | 每次桌面搜索数量，0 表示只处理活动 |
+| `REWARDS_SEARCH_INTERVAL` | `15` | 搜索后等待秒数，范围 10–120 |
+| `REWARDS_ACTION_WAIT` | `10` | 活动后等待秒数，范围 5–60 |
+| `REWARDS_MAX_ACTIVITIES` | `10` | 每次活动上限，0 表示只搜索 |
+| `REWARDS_HEADLESS` | `false` | 是否隐藏任务运行时的浏览器窗口 |
+
+可单独运行 `--doctor` 检查网络，不访问微软网站。检查使用两个外部 IP 地区服务，分别核对可用的 IPv4 / IPv6 出口；查询失败、结果不一致或运行中网络变化均会停止任务。
+
+本机检测和 IP 地区查询存在边界：路由器 VPN 或未知分流可能未被识别，微软的地区判定也可能与查询服务不同。请在整个运行期间保持 VPN 关闭。微软条款限制自动搜索，使用自动化仍可能导致账号受限，详见 [Microsoft Rewards 条款](https://www.microsoft.com/en-US/servicesagreement)。
+
+任务实现参考了 [bing-rewards-auto](https://github.com/dwgx/bing-rewards-auto) 的独立会话及操作后核对积分思路，具体功能以本项目说明为准。
 
 ### 添加脚本
 

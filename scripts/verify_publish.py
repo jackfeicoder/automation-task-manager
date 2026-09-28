@@ -29,6 +29,8 @@ def forbidden_path(name):
                     'session.json', 'storage-state.json', 'storage_state.json', 'workbuddy-desktop.info',
                     'id_rsa', 'id_ed25519'}
         or '.local.' in base
+        or (base.startswith('auth') and path.suffix.lower() == '.json')
+        or (base.startswith('cookies') and path.suffix.lower() == '.txt')
         or path.suffix.lower() in {'.pem', '.key', '.p12', '.pfx', '.db', '.sqlite', '.sqlite3', '.log'})
 
 
