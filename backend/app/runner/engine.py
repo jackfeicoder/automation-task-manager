@@ -9,7 +9,7 @@ import subprocess
 
 from backend.app.models import Task
 from backend.app.runner.processes import ProcessTree
-from backend.app.scheduler.timing import utc_now
+from backend.app.scheduler.timing import local_day, utc_now
 
 RESULT_PREFIX = 'AUTOMATION_RESULT='
 RESULT_STATUSES = {'success','already_completed','failed','needs_login','needs_attention'}
@@ -111,7 +111,7 @@ class Engine:
             self.append_log(run_id, '平台错误: ' + message)
         finally:
             self.store.update_run(run_id, status=status, message=message, result=result,
-                                  exit_code=exit_code, finished_at=utc_now().isoformat())
+                                  exit_code=exit_code, day=local_day(task.schedule), finished_at=utc_now().isoformat())
 
     def append_log(self, run_id, text):
         path = self.log_dir / (run_id + '.log')

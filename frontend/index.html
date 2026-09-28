@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#192d3a">
   <title>Task Harbor · 自动化任务管理</title>
   <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/editor.css">
 </head>
 <body>
   <aside class="sidebar">
@@ -40,7 +41,7 @@
         <label>最多尝试次数<input name="max_attempts" type="number" min="1" max="5" value="1" required></label>
         <label>资源组<input name="resource_group" placeholder="同一资源组的任务串行运行"></label>
         <label>工作目录<input name="cwd" required value="tasks/example"></label>
-        <label class="full">启动命令（JSON 参数数组）<textarea name="command" rows="2" required>["{python}", "main.py"]</textarea><small>{python} 自动使用当前 venv。脚本目录需先在本机创建。</small></label>
+        <label class="full">启动命令（JSON 参数数组）<textarea name="command" rows="2" required>["{python}", "main.py"]</textarea><small>{python} 自动使用当前 venv。填写 tasks/任务ID 可自动创建目录，再通过「脚本」编写代码。</small></label>
         <label class="full">传入的环境变量名称<input name="env_names" placeholder="例如 WORKBUDDY_ACCESS_TOKEN, WORKBUDDY_USER_ID"><small>变量值在「运行环境」中单独设置。</small></label>
         <label class="checkbox-label"><input name="enabled" type="checkbox">开启定时执行</label>
         <label class="checkbox-label"><input name="daily_once" type="checkbox">每天成功后跳过重复执行</label>
@@ -50,6 +51,7 @@
   </dialog>
   <dialog id="log-dialog" class="dialog log-dialog"><div class="dialog-heading"><div><span class="eyebrow">EXECUTION DETAIL</span><h2 id="log-title">执行日志</h2></div><button class="icon-button" data-close="log-dialog" aria-label="关闭">×</button></div><div id="log-meta"></div><pre id="log-output"></pre><div class="dialog-footer"><button class="button" id="copy-log">复制日志</button><button class="button danger" id="stop-log">停止执行</button><button class="button" data-close="log-dialog">关闭</button></div></dialog>
   <dialog id="login-dialog" class="dialog"><form id="login-form"><div class="dialog-heading"><div><span class="eyebrow">WORKSPACE ACCESS</span><h2>进入工作空间</h2></div></div><label>管理访问密钥<input name="token" type="password" required autocomplete="current-password"></label><div class="dialog-footer"><button class="button primary">登录</button></div></form></dialog>
+  <dialog id="source-dialog" class="dialog wide"><form id="source-form"><div class="dialog-heading"><div><span class="eyebrow">PLUGIN SOURCE</span><h2 id="source-title">编辑脚本</h2></div><button type="button" class="icon-button" data-close="source-dialog" aria-label="关闭">×</button></div><label>已有脚本<select id="source-files"></select></label><label>文件路径<input id="source-path" required value="main.py"></label><label>脚本内容<textarea id="source-content" rows="18" spellcheck="false" required></textarea><small>保存前会备份旧版本；Python 脚本进行语法检查。正在运行或排队时需先停止任务。</small></label><div class="dialog-footer"><button type="button" class="button" data-close="source-dialog">取消</button><button class="button primary" type="submit">保存脚本</button></div></form></dialog>
   <div id="toasts" aria-live="assertive"></div>
   <script type="module" src="/assets/app.js"></script>
 </body>

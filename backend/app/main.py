@@ -19,6 +19,7 @@ from backend.app.environment import Environment
 from backend.app.models import BatchRequest, EnvironmentUpdate, Settings, Task
 from backend.app.runner.engine import Engine, task_directory
 from backend.app.storage.database import Store
+from backend.app.storage.instance import InstanceLock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -33,10 +34,14 @@ def create_app(root=ROOT, data_dir=None):
 
     @asynccontextmanager
     async def lifespan(app):
-        discover()
-        await engine.start()
-        yield
-        await engine.stop()
+        instance=InstanceLock(store.data_dir/'scheduler.lock')
+        try:
+            discover()
+            await engine.start()
+            yield
+        finally:
+            await engine.stop()
+            instance.close()
 
     app = FastAPI(title='Automation Task Manager', lifespan=lifespan)
     app.state.store, app.state.engine = store, engine
@@ -107,6 +112,10 @@ def create_app(root=ROOT, data_dir=None):
 
     @app.post('/api/tasks', status_code=201)
     def add_task(task: Task):
+        if store.task(task.id):
+            raise HTTPException(409, '任务 ID 已存在')
+        if task.cwd == f'tasks/{task.id}':
+            (root/'tasks'/task.id).mkdir(parents=True,exist_ok=True)
         validate_task(task)
         try:
             store.save_task(task, create=True)
@@ -214,6 +223,47 @@ def create_app(root=ROOT, data_dir=None):
             return doctor({name: environment.get(name) for name in ('WORKBUDDY_AUTH_FILE','WORKBUDDY_ACCESS_TOKEN','WORKBUDDY_USER_ID','WORKBUDDY_DOMAIN')})
         except ImportError:
             return {'ready': False, 'message': 'WorkBuddy 插件尚未安装'}
+
+    def plugin_directory(task_id):
+        task=store.task(task_id)
+        if not task:
+            raise HTTPException(404,'任务不存在')
+        return task_directory(root,task.cwd)
+
+    @app.get('/api/tasks/{task_id}/files')
+    def plugin_files(task_id:str):
+        from backend.app.api.files import files
+        return {'files':files(plugin_directory(task_id))}
+
+    @app.get('/api/tasks/{task_id}/file')
+    def read_file(task_id:str,path:str):
+        from backend.app.api.files import read
+        try:
+            return {'path':path,'content':read(plugin_directory(task_id),path)}
+        except (ValueError,UnicodeDecodeError) as error:
+            raise HTTPException(422,str(error)) from None
+
+    class SourceUpdate(BaseModel):
+        path:str
+        content:str
+
+    @app.put('/api/tasks/{task_id}/file')
+    async def write_file(task_id:str,body:SourceUpdate):
+        with store.mutation_lock:
+            return save_source(task_id,body)
+
+    def save_source(task_id,body):
+        from backend.app.api.files import save
+        directory=plugin_directory(task_id)
+        with store.connect() as db:
+            active=db.execute("SELECT snapshot FROM runs WHERE status IN ('queued','running')").fetchall()
+        if any((root/json.loads(row[0])['cwd']).resolve()==directory for row in active):
+            raise HTTPException(409,'此脚本目录有任务正在排队或执行，请先停止任务')
+        try:
+            backup=save(directory,body.path,body.content,store.data_dir/'artifacts/revisions')
+        except (ValueError,UnicodeDecodeError) as error:
+            raise HTTPException(422,str(error)) from None
+        return {'status':'saved','backup':backup}
 
     frontend = root / 'frontend'
     if (frontend / 'src').is_dir():

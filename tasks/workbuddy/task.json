@@ -1,0 +1,14 @@
+{
+  "id": "workbuddy",
+  "name": "WorkBuddy 每日签到",
+  "description": "使用本机 WorkBuddy 登录状态领取每日签到积分。",
+  "enabled": true,
+  "command": ["{python}", "main.py", "--claim"],
+  "cwd": "tasks/workbuddy",
+  "schedule": {"kind": "daily", "time": "09:00", "timezone": "Asia/Shanghai"},
+  "timeout_seconds": 90,
+  "max_attempts": 2,
+  "resource_group": "workbuddy-local-account",
+  "daily_once": true,
+  "env_names": ["WORKBUDDY_AUTH_FILE", "WORKBUDDY_ACCESS_TOKEN", "WORKBUDDY_USER_ID", "WORKBUDDY_DOMAIN"]
+}

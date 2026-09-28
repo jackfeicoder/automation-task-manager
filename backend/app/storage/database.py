@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +16,7 @@ class Store:
         self.data_dir = data_dir
         data_dir.mkdir(parents=True, exist_ok=True)
         self.path = data_dir / 'state.db'
+        self.mutation_lock=threading.RLock()
         with self.connect() as db:
             db.executescript('''
                 PRAGMA journal_mode=WAL;
@@ -80,6 +82,11 @@ class Store:
                 db.execute('INSERT INTO tasks VALUES(?,?,?,?)', (task.id, task.model_dump_json(), due, utc_now().isoformat()))
                 db.execute('DELETE FROM removed_plugins WHERE id=?', (task.id,))
             else:
+                existing = db.execute('SELECT config,next_run FROM tasks WHERE id=?', (task.id,)).fetchone()
+                if existing:
+                    previous = Task.model_validate_json(existing['config'])
+                    if previous.enabled == task.enabled and previous.schedule == task.schedule:
+                        due = existing['next_run']
                 db.execute('UPDATE tasks SET config=?,next_run=? WHERE id=?', (task.model_dump_json(), due, task.id))
 
     def delete_task(self, task_id):
@@ -95,6 +102,10 @@ class Store:
             return bool(db.execute('SELECT 1 FROM removed_plugins WHERE id=?', (task_id,)).fetchone())
 
     def enqueue(self, task_id, source='manual'):
+        with self.mutation_lock:
+            return self._enqueue(task_id,source)
+
+    def _enqueue(self, task_id, source='manual'):
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT config FROM tasks WHERE id=?', (task_id,)).fetchone()
@@ -152,7 +163,7 @@ class Store:
             return [self.decode_run(row) for row in db.execute("SELECT * FROM runs WHERE status='queued' ORDER BY created_at").fetchall()]
 
     def update_run(self, run_id, **values):
-        allowed = {'status','started_at','finished_at','attempt','message','result','exit_code'}
+        allowed = {'status','started_at','finished_at','attempt','message','result','exit_code','day'}
         if not values.keys() <= allowed:
             raise ValueError('Invalid run update')
         if 'result' in values and values['result'] is not None:

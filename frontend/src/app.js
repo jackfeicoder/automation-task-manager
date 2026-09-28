@@ -6,7 +6,7 @@ const state={tasks:[],runs:[],settings:{},environment:{variables:[]},doctor:null
 const pages={tasks:tasksPage,runs:runsPage,settings:settingsPage,environment:environmentPage};
 const pageNames={tasks:'任务管理',runs:'执行记录',settings:'全局配置',environment:'运行环境'};
 const content=document.querySelector('#content');
-let editing=null, logId=null, refreshing=false;
+let editing=null, logId=null, sourceTask=null, refreshing=false;
 const currentPage=()=>location.hash.slice(1) in pages?location.hash.slice(1):'tasks';
 
 function render() {
@@ -15,10 +15,14 @@ function render() {
   document.querySelector('#page-name').textContent=pageNames[page];
   document.querySelectorAll('nav a').forEach(x=>x.classList.toggle('active',x.dataset.page===page));
   content.innerHTML=pages[page](state);
+  if(page==='tasks') content.querySelectorAll('[data-action="edit"]').forEach(button=>{
+    const source=document.createElement('button');source.className='link-button';source.dataset.action='source';source.dataset.id=button.dataset.id;source.textContent='脚本';button.after(source);
+  });
 }
 
 async function refresh(renderPage=true) {
-  if (refreshing) return;
+  if (refreshing && renderPage==='poll') return;
+  while (refreshing) await new Promise(resolve=>setTimeout(resolve,30));
   refreshing=true;
   try {
     const [tasks,runs,settings,environment]=await Promise.all([api('/tasks'),api('/runs'),api('/settings'),api('/environment')]);
@@ -27,7 +31,7 @@ async function refresh(renderPage=true) {
     document.querySelector('#connection').textContent='后台服务在线';
     document.querySelector('#connection-dot').className='online';
     const editingPage=document.activeElement?.closest('#content form') || document.activeElement?.id==='search';
-    if (renderPage && !editingPage && (renderPage!=='poll' || ['tasks','runs'].includes(currentPage()))) render();
+    if (renderPage && (renderPage!=='poll' || (!editingPage && ['tasks','runs'].includes(currentPage())))) render();
     if (logId && document.querySelector('#log-dialog').open) await updateLog();
   } catch(error) {
     if(error.status===401) {
@@ -84,6 +88,21 @@ async function run(id) {
   await refresh();
 }
 
+async function openSource(id) {
+  sourceTask=id;
+  const result=await api('/tasks/'+id+'/files');
+  const select=document.querySelector('#source-files');
+  select.innerHTML=result.files.map(path=>`<option value="${escape(path)}">${escape(path)}</option>`).join('')+'<option value="">新建脚本…</option>';
+  document.querySelector('#source-title').textContent=state.tasks.find(x=>x.id===id).name+' · 脚本';
+  await loadSource(select.value);
+  document.querySelector('#source-dialog').showModal();
+}
+
+async function loadSource(path) {
+  document.querySelector('#source-path').value=path||'main.py';
+  document.querySelector('#source-content').value=path?(await api('/tasks/'+sourceTask+'/file?path='+encodeURIComponent(path))).content:'print("任务开始", flush=True)\n';
+}
+
 document.addEventListener('click',async event=>{
   const close=event.target.closest('[data-close]');
   if(close) {document.getElementById(close.dataset.close).close();if(close.dataset.close==='log-dialog')logId=null;return;}
@@ -95,6 +114,7 @@ document.addEventListener('click',async event=>{
   try {
     if(action==='new')openTask();
     if(action==='edit')openTask(task);
+    if(action==='source')await openSource(id);
     if(action==='run')await run(id);
     if(action==='toggle') {await send('/tasks/'+id,{...task,enabled:!task.enabled},'PUT');await refresh();}
     if(action==='delete' && confirm(`删除「${task.name}」？历史记录会保留。`)) {await api('/tasks/'+id,{method:'DELETE'});toast('任务已删除');await refresh();}
@@ -121,6 +141,7 @@ document.addEventListener('change',event=>{
   if(target.id==='select-all'){content.querySelectorAll('[data-select]').forEach(x=>{x.checked=target.checked;if(x.checked)state.selected.add(x.dataset.select);else state.selected.delete(x.dataset.select);});document.querySelector('#selected-count').textContent=state.selected.size;}
   if(target.id==='run-filter'){state.runFilter=target.value;render();}
   if(target.name==='kind')frequencyFields();
+  if(target.id==='source-files')loadSource(target.value).catch(error=>toast(error.message,true));
 });
 document.addEventListener('input',event=>{
   if(event.target.id==='search') {
@@ -134,22 +155,23 @@ document.addEventListener('input',event=>{
 document.addEventListener('submit',async event=>{
   event.preventDefault();
   const form=event.target;
+  const formId=form.getAttribute('id');
   const button=form.querySelector('[type="submit"]')||form.querySelector('.primary');
   if(button)button.disabled=true;
   try {
     const fd=new FormData(form);
-    if(form.id==='task-form') {
+    if(formId==='task-form') {
       const command=JSON.parse(fd.get('command'));
       if(!Array.isArray(command))throw new Error('启动命令需要填写 JSON 数组');
       const payload={id:fd.get('id'),name:fd.get('name'),description:fd.get('description'),enabled:fd.has('enabled'),daily_once:fd.has('daily_once'),cwd:fd.get('cwd'),command,timeout_seconds:Number(fd.get('timeout_seconds')),max_attempts:Number(fd.get('max_attempts')),resource_group:fd.get('resource_group'),env_names:fd.get('env_names').split(',').map(x=>x.trim()).filter(Boolean),schedule:{kind:fd.get('kind'),timezone:fd.get('timezone'),time:fd.get('time')||'09:00',weekdays:fd.getAll('weekday').map(Number),interval_minutes:Number(fd.get('interval_minutes')),cron:fd.get('cron')}};
       await send(editing?'/tasks/'+editing:'/tasks',payload,editing?'PUT':'POST');
       document.querySelector('#task-dialog').close();toast('任务配置已保存');
     }
-    if(form.id==='settings-form') {
+    if(formId==='settings-form') {
       await send('/settings',{max_parallel:Number(fd.get('max_parallel')),timezone:fd.get('timezone'),retry_delay_seconds:Number(fd.get('retry_delay_seconds')),log_retention_days:Number(fd.get('log_retention_days')),scheduler_enabled:fd.has('scheduler_enabled'),catch_up:fd.has('catch_up')},'PUT');
       toast('全局配置已保存');
     }
-    if(form.id==='environment-form') {
+    if(formId==='environment-form') {
       const values={};form.querySelectorAll('[data-env]').forEach(x=>{if(x.value)values[x.dataset.env]=x.value;});
       const name=document.querySelector('#env-new-name').value.trim(),value=document.querySelector('#env-new-value').value;
       if(name && value)values[name]=value;
@@ -157,7 +179,11 @@ document.addEventListener('submit',async event=>{
       await send('/environment',{values},'PUT');form.reset();toast('环境变量已保存');
       state.doctor=await api('/plugins/workbuddy/doctor');
     }
-    if(form.id==='login-form'){await send('/auth/login',{token:fd.get('token')});form.reset();document.querySelector('#login-dialog').close();}
+    if(formId==='login-form'){await send('/auth/login',{token:fd.get('token')});form.reset();document.querySelector('#login-dialog').close();}
+    if(formId==='source-form'){
+      await send('/tasks/'+sourceTask+'/file',{path:document.querySelector('#source-path').value,content:document.querySelector('#source-content').value},'PUT');
+      document.querySelector('#source-dialog').close();toast('脚本已保存，旧版本已备份');
+    }
     await refresh(false);render();
   }catch(error){toast(error.message,true);}finally{if(button)button.disabled=false;}
 });

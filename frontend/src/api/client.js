@@ -3,6 +3,7 @@ export async function api(path, options = {}) {
     ...options,
     headers: {'Content-Type': 'application/json', ...options.headers},
     credentials: 'same-origin',
+    signal: options.signal || AbortSignal.timeout(15000),
   });
   const data = await response.json();
   if (!response.ok) {
