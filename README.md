@@ -1,118 +1,88 @@
 # Task Harbor · 自动化任务管理
 
-本机任务管理平台，支持 Web UI、定时调度、独立进程、单个与批量运行、执行日志、全局配置、环境变量以及脚本编辑。内置 WorkBuddy 每日签到。
+Task Harbor 是运行在本机的自动化任务管理平台。通过网页管理多个脚本的执行时间、运行状态和配置，适合每日签到、周期性脚本和其他重复任务。内置 WorkBuddy 每日签到插件。
 
-## Windows 启动
+## 功能
 
-要求 Python 3.11+。前端由后端直接提供，无需 Node.js 或前端构建。
+- **任务管理**：新增、编辑、删除任务，单独或批量开启、关闭定时任务。
+- **灵活调度**：支持手动、每日、每周、固定间隔和 Cron，可设置任务时区。
+- **手动执行**：运行单个或批量任务，查看执行状态，停止任务或重新运行。
+- **故障隔离**：每个脚本在独立进程中运行，单个任务出错后其他任务继续执行。
+- **并发控制**：设置全局并发数量，同一任务避免重复运行，同资源组依次执行。
+- **执行记录**：查看日志、耗时、结果和尝试次数，支持有限重试及错过任务补跑。
+- **全局配置**：设置默认时区、调度暂停、补跑策略、重试间隔和日志保留时间。
+- **运行环境**：使用 Python venv，支持本地环境变量配置，变量值保存后不回显。
+- **脚本扩展**：扫描插件目录发现新任务，在界面创建、修改脚本；修改前备份，Python 脚本保存时检查语法。
+- **WorkBuddy 签到**：读取本机客户端登录状态，执行每日签到，显示成功、今日已完成或需要重新登录等结果。
+
+## 部署
+
+### 环境要求
+
+- Windows，Python 3.11 或更新版本。
+- 安装依赖时需要网络连接。
+- 前端由后端直接提供，无需 Node.js 或前端构建。
+- WorkBuddy 签到需要安装并登录本机 WorkBuddy 桌面客户端。
+
+### 下载与启动
 
 ```powershell
-cd E:\Desktop\github\automation
+git clone https://github.com/jackfeicoder/automation-task-manager.git
+cd automation-task-manager
 ./scripts/setup.ps1
 ./scripts/start.ps1
 ```
 
-打开 **http://127.0.0.1:8765**。也可双击 `start.cmd`，首次自动创建 `.venv` 并安装锁定依赖。服务停止按 Ctrl+C；关闭网页后后台任务继续执行。
+安装脚本会创建 `.venv`、安装锁定依赖，并从示例配置生成本地 `.env` 文件。
 
-## 界面
+启动后访问 **http://127.0.0.1:8765**。也可双击项目目录中的 `start.cmd`，首次运行时自动完成环境安装。前台启动时按 `Ctrl+C` 停止服务；服务运行期间，关闭网页不影响任务执行。
 
-- **任务管理**：新增、编辑、删除、定时开关、单个/批量运行、批量启停。
-- **频率**：手动、每日、每周、固定间隔、五段 Cron，支持任务时区。
-- **执行记录**：状态、耗时、尝试次数、每 3 秒更新日志、停止与重跑。
-- **全局配置**：并发、默认时区、调度暂停、补跑、重试间隔、日志保留。
-- **运行环境**：venv、解释器、变量配置状态、WorkBuddy 登录检查；变量值只写不回显。
-- **脚本编辑**：创建/修改 Python、JS、PowerShell、Shell 脚本，保存前备份旧版本；Python 检查语法。共用目录有任务排队/执行时需先停止任务。
+### 本地配置
 
-## WorkBuddy
+编辑本地 `.env` 可调整监听端口等启动配置，修改后重启服务。在网页的「全局配置」中调整调度与并发，在「运行环境」中设置任务变量。
 
-默认每天 **09:00 / Asia/Shanghai** 执行。先登录本机 WorkBuddy 桌面客户端，再点「运行环境 → 检查 WorkBuddy」。本机已验证 2026-09-28 签到领取 100 积分，实际奖励按活动规则确定。
+登录信息、访问密钥及其他敏感值只保存于本机的 `.env` 或 `data/`，请勿填写到脚本源码、插件清单或示例配置中。这些本地文件已加入 Git 忽略规则，上传脚本还会检查当前文件和 Git 历史。
 
-自动查找：
-
-```text
-%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info
-%APPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info
-```
-
-可用 `WORKBUDDY_AUTH_FILE` 指定文件，或设置 `WORKBUDDY_ACCESS_TOKEN` 和 `WORKBUDDY_USER_ID`，可选 `WORKBUDDY_DOMAIN`。UI 本地变量优先于进程变量。
-
-登录过期显示「需要登录」：打开客户端刷新登录后重跑。当前版本不改写客户端文件，也不自行刷新 refresh token。内部签到接口变更后可能需更新插件。
-
-插件先查询状态，再通过积分结果或明确的「今日已签到」业务码确认完成。未确认的响应不进入每日成功缓存；网络/服务端错误可有限重试。
-
-```powershell
-./.venv/Scripts/python.exe tasks/workbuddy/main.py --doctor
-./.venv/Scripts/python.exe tasks/workbuddy/main.py --status
-./.venv/Scripts/python.exe tasks/workbuddy/main.py --claim
-```
-
-## 新增插件
-
-前端新建任务，填写唯一 ID 及 `tasks/任务ID` 工作目录，保存后点「脚本」创建 `main.py`。命令使用 `["{python}", "main.py"]`，自动选择平台 venv。
-
-也可在 `tasks/<plugin>/` 放入脚本及 `task.json`，点「扫描插件」发现。参考 `tasks/example/task.json`。已有配置以数据库为准，扫描不覆盖 UI 设置。删除任务后不会因扫描/重启自动恢复，可通过新建重新添加。
-
-脚本打印日志，退出码 0 表示正常结束。业务结果可输出独立一行：
-
-```python
-import json
-print('AUTOMATION_RESULT=' + json.dumps({
-    'status': 'success', 'message': '已确认任务完成',
-    'data': {'credits': 100}
-}, ensure_ascii=False), flush=True)
-```
-
-支持 `success`、`already_completed`、`failed`、`needs_login`、`needs_attention`。仅 `failed` 并携带 `retryable: true` 自动重试，插件应确保写操作幂等。
-
-同一任务最多一项活动执行，同资源组串行。关闭定时不会终止当前任务；停止按钮单独控制取消。入队配置固定，磁盘脚本请避开运行时手动修改。
-
-## 配置与数据
-
-`.env.example` 是启动配置示例：监听端口、可选管理访问密钥、WorkBuddy 变量。复制为 `.env` 后修改，重启生效；当前仅监听本机。
-
-| 路径 | 内容 |
-|---|---|
-| `data/state.db` | 任务、设置、执行记录 |
-| `data/environment.json` | UI 设置的本地变量 |
-| `data/logs/` | 脱敏日志，单份约 2 MiB 上限，每小时清理过期文件 |
-| `data/artifacts/revisions/` | 脚本修改前的备份 |
-| `data/profiles/` | 后续浏览器插件登录状态 |
-
-`data/`、`.env`、`.venv` 不提交 Git。备份前停止服务，复制整个 `data/`。独立进程用于故障隔离，脚本仍以本机用户身份执行，请加载可信插件。
-
-重复启动由实例锁阻止。服务中断的运行标记为「服务中断」，排队任务恢复，错过的定时任务按补跑策略最多补跑一次。电脑关机时服务暂停。
-
-可选 Windows 登录后自动启动，默认未安装：
+### 登录后自动启动
 
 ```powershell
 ./scripts/install_startup.ps1
-./scripts/install_startup.ps1 -Remove  # 移除
 ```
 
-## 测试
+移除自动启动：
 
 ```powershell
-./scripts/test.ps1
-# 浏览器测试需要本机 Edge，先启动后台服务
-./.venv/Scripts/python.exe -m pip --isolated install --index-url https://pypi.org/simple -r requirements-dev.txt
-./.venv/Scripts/python.exe scripts/ui_smoke.py
+./scripts/install_startup.ps1 -Remove
 ```
 
-浏览器测试使用示例脚本，覆盖增删改、频率、单个/批量运行、日志、配置、变量、脚本编辑和响应式布局，不执行 WorkBuddy 领取。截图保存在 `data/artifacts/`。
+电脑关机期间任务暂停，服务启动后按配置处理错过的任务。
 
-## GitHub 发布
+## 使用
 
-从环境读取 `GITHUB_TOKEN` 或 `GH_TOKEN`，默认创建私有仓库。令牌需要仓库创建和内容写入权限，密钥不进入远程 URL 或 Git 配置。
+### WorkBuddy 每日签到
 
-```powershell
-./.venv/Scripts/python.exe scripts/github_repo.py create --name automation-task-manager
-git add .
-git commit -m "feat: completed step"
-./.venv/Scripts/python.exe scripts/github_repo.py push
+1. 打开本机 WorkBuddy 桌面客户端并登录。
+2. 在「运行环境」中检查 WorkBuddy 登录状态。
+3. 在任务列表中运行 WorkBuddy 签到，或开启定时执行。
+
+默认执行时间为每天 **09:00，Asia/Shanghai**。登录过期时，在客户端重新登录后运行任务。实际积分以服务端返回结果为准，客户端接口发生变化时需要更新插件。
+
+### 添加脚本
+
+在网页中新建任务，设置唯一任务 ID、工作目录、启动命令和执行频率，再通过「脚本」编辑入口创建脚本。
+
+Python 任务的启动命令可设置为：
+
+```json
+["{python}", "main.py"]
 ```
 
-已有空仓库时，用 `git remote add origin https://github.com/OWNER/REPO.git` 后推送。名称冲突时创建脚本停止，避免覆盖现有仓库。
+`{python}` 自动使用项目虚拟环境中的解释器。也支持 JavaScript、PowerShell 和 Shell 脚本，需要本机安装对应运行环境。
 
-实现过程按阶段保留提交，已推送到公开仓库 [jackfeicoder/automation-task-manager](https://github.com/jackfeicoder/automation-task-manager)。环境令牌需要 Administration 读写权限以创建仓库、Contents 读写权限以推送代码，Metadata 只读权限由 GitHub 自动要求。
+也可将脚本和 `task.json` 放入 `tasks/<任务名称>/`，点击「扫描插件」添加任务。插件配置示例见 `tasks/example/`。
 
-模块与接口见 [架构文档](docs/architecture.md)。
+### 数据备份
+
+任务配置、执行记录、日志和脚本备份保存在本机 `data/` 目录。备份前停止服务，再复制整个目录；恢复时将备份放回相同位置。备份中可能包含本地配置和登录状态，请妥善保存。
+
+更多任务执行行为见 [功能说明](docs/architecture.md)。

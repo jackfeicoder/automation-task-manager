@@ -7,6 +7,24 @@
 !.env.example
 /config/*.local.*
 /config/local.json
+# Local login exports and private keys, including files placed outside data/.
+**/environment.json
+**/credentials.json
+**/cookies.json
+**/session.json
+**/storage-state.json
+**/storage_state.json
+**/workbuddy-desktop.info
+**/profiles/
+*.pem
+*.key
+*.p12
+*.pfx
+*.db
+*.sqlite
+*.sqlite3
+id_rsa
+id_ed25519
 *.log
 coverage.xml
 .coverage
