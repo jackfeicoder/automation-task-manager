@@ -54,7 +54,10 @@ class Engine:
                 for run_id, item in list(self.active.items()):
                     if item['future'].done():
                         # execute() records errors; consuming the result prevents unhandled warnings.
-                        item['future'].result()
+                        if item['future'].cancelled():
+                            self.store.update_run(run_id,status='cancelled',finished_at=utc_now().isoformat(),message='执行已停止')
+                        else:
+                            item['future'].result()
                         del self.active[run_id]
                 groups = {item['group'] for item in self.active.values() if item['group']}
                 for run in self.store.queued():
@@ -121,7 +124,10 @@ class Engine:
             stream.write(utc_now().isoformat() + ' ' + self.environment.redact(text)[:65536] + '\n')
 
     async def attempt(self, run_id, task, attempt):
-        command = [sys.executable if part == '{python}' else part for part in task.command]
+        python=Path(sys.executable)
+        if python.name.lower()=='pythonw.exe':
+            python=python.with_name('python.exe')
+        command = [str(python) if part == '{python}' else part for part in task.command]
         directory = task_directory(self.root, task.cwd)
         env = self.environment.child(task.env_names)
         self.append_log(run_id, f'开始第 {attempt} 次执行')
@@ -151,7 +157,7 @@ class Engine:
                 try:
                     value = json.loads(line[len(RESULT_PREFIX):])
                     if isinstance(value, dict) and value.get('status') in RESULT_STATUSES:
-                        parsed = json.loads(self.environment.redact(json.dumps(value, ensure_ascii=False)))
+                        parsed = self.environment.sanitize(value)
                     else:
                         self.append_log(run_id, '任务结果状态无效')
                 except (ValueError, TypeError):

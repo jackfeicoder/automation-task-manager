@@ -101,6 +101,7 @@ def test_environment_redaction_and_validation(client, monkeypatch, tmp_path):
     environment.update({'CUSTOM_TOKEN':'sample-private-value'})
     assert 'GITHUB_TOKEN' not in environment.child([])
     assert environment.redact('sample-private-value') == '[REDACTED]'
+    assert environment.sanitize({'credits':100,'accessToken':'hidden'}) == {'credits':100,'accessToken':'[REDACTED]'}
     response = client.put('/api/environment',json={'values':{'CUSTOM_TOKEN':'sample-private-value'}})
     assert response.status_code == 200
     assert 'sample-private-value' not in response.text
@@ -135,3 +136,23 @@ def test_scheduler_and_restart_recovery(tmp_path):
     store.update_run(run_id,status='running')
     store.recover()
     assert store.run(run_id)['status'] == 'interrupted'
+
+
+def test_single_scheduler_per_data_directory(tmp_path):
+    from backend.app.storage.instance import InstanceLock
+    first=InstanceLock(tmp_path/'scheduler.lock')
+    with pytest.raises(RuntimeError):
+        InstanceLock(tmp_path/'scheduler.lock')
+    first.close()
+    second=InstanceLock(tmp_path/'scheduler.lock')
+    second.close()
+
+
+def test_description_edit_preserves_schedule(tmp_path):
+    store=Store(tmp_path)
+    item=task('interval',enabled=True,schedule=Schedule(kind='interval',interval_minutes=10))
+    store.save_task(item,create=True)
+    due=store.list_tasks()[0]['next_run']
+    item.description='Updated description'
+    store.save_task(item)
+    assert store.list_tasks()[0]['next_run']==due

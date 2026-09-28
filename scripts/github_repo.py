@@ -55,6 +55,8 @@ def create(name):
 def push():
     if not (os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')):
         raise RuntimeError('GitHub token is missing')
+    from verify_publish import verify
+    verify()
     with tempfile.TemporaryDirectory(prefix='automation-askpass-') as temp:
         folder = Path(temp)
         helper = folder / 'askpass.py'

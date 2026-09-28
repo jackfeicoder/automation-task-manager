@@ -103,6 +103,13 @@ async function loadSource(path) {
   document.querySelector('#source-content').value=path?(await api('/tasks/'+sourceTask+'/file?path='+encodeURIComponent(path))).content:'print("任务开始", flush=True)\n';
 }
 
+function renderDoctor() {
+  const panel=content.querySelector('.credential-panel');
+  if(!panel || !state.doctor)return;
+  const doctor=state.doctor;
+  panel.innerHTML=`<div class="panel-toolbar"><div><h2>WorkBuddy 登录状态</h2><small>读取本机客户端登录文件，或使用下方环境变量</small></div><span class="badge ${doctor.ready?'success':'needs_login'}"><i></i>${doctor.ready?'已检测到凭据':'需要配置'}</span></div><p class="doctor-message">${escape(doctor.message)}</p>${doctor.path?`<code class="doctor-path">${escape(doctor.path)}</code>`:''}`;
+}
+
 document.addEventListener('click',async event=>{
   const close=event.target.closest('[data-close]');
   if(close) {document.getElementById(close.dataset.close).close();if(close.dataset.close==='log-dialog')logId=null;return;}
@@ -130,7 +137,7 @@ document.addEventListener('click',async event=>{
     if(action==='log'){logId=id;await updateLog();document.querySelector('#log-dialog').showModal();}
     if(action==='stop'){await send('/runs/'+id+'/stop',{});toast('已请求停止任务');await refresh();}
     if(action==='refresh')await refresh();
-    if(action==='doctor'){state.doctor=await api('/plugins/workbuddy/doctor');render();}
+    if(action==='doctor'){state.doctor=await api('/plugins/workbuddy/doctor');renderDoctor();}
     if(action==='env-remove' && confirm(`清除 ${id} 的本地值？系统环境变量如有配置，仍会生效。`)){await send('/environment',{values:{[id]:null}},'PUT');toast('本地值已清除');await refresh();}
   } catch(error){toast(error.message,true);} finally {button.disabled=false;}
 });

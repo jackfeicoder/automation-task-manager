@@ -160,7 +160,7 @@ class Store:
 
     def queued(self):
         with self.connect() as db:
-            return [self.decode_run(row) for row in db.execute("SELECT * FROM runs WHERE status='queued' ORDER BY created_at").fetchall()]
+            return [self.decode_run(row) for row in db.execute("SELECT * FROM runs WHERE status='queued' ORDER BY created_at,rowid").fetchall()]
 
     def update_run(self, run_id, **values):
         allowed = {'status','started_at','finished_at','attempt','message','result','exit_code','day'}

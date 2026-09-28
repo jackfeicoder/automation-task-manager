@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import time
+import tempfile
 
 from playwright.sync_api import sync_playwright, expect
 
@@ -12,6 +13,9 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def main(url):
     task_id='ui-smoke-'+str(int(time.time()))
+    temporary=tempfile.TemporaryDirectory(prefix='ui-smoke-',dir=ROOT/'data')
+    working_directory=Path(temporary.name)
+    assert working_directory.resolve().is_relative_to((ROOT/'data').resolve())
     errors=[]
     with sync_playwright() as playwright:
         browser=playwright.chromium.launch(channel='msedge',headless=True)
@@ -28,6 +32,7 @@ def main(url):
         form=page.locator('#task-form')
         form.locator('[name="id"]').fill(task_id)
         form.locator('[name="name"]').fill('UI 验证任务')
+        form.locator('[name="cwd"]').fill(working_directory.relative_to(ROOT).as_posix())
         form.locator('[name="kind"]').select_option('weekly')
         form.locator('[name="weekday"][value="2"]').check()
         form.locator('[name="enabled"]').check()
@@ -42,6 +47,16 @@ def main(url):
             raise
         row=page.locator('tr').filter(has_text='UI 验证任务')
         expect(row).to_be_visible()
+        # Create a plugin source through the UI, then edit it with a backup.
+        row.get_by_role('button',name='脚本',exact=True).click()
+        page.locator('#source-content').fill('import time\nprint("示例任务开始", flush=True)\ntime.sleep(0.2)\nprint("示例任务完成", flush=True)\n')
+        page.get_by_role('button',name='保存脚本',exact=True).click()
+        expect(page.locator('#source-dialog')).not_to_be_visible()
+        row.get_by_role('button',name='脚本',exact=True).click()
+        assert '示例任务开始' in page.locator('#source-content').input_value()
+        page.locator('#source-content').fill(page.locator('#source-content').input_value()+'# verified source revision\n')
+        page.get_by_role('button',name='保存脚本',exact=True).click()
+        expect(page.locator('#source-dialog')).not_to_be_visible()
         row.get_by_role('button',name='编辑',exact=True).click()
         expect(form.locator('[name="kind"]')).to_have_value('weekly')
         form.locator('[name="description"]').fill('UI smoke test')
@@ -96,10 +111,14 @@ def main(url):
         page.set_viewport_size({'width':390,'height':844})
         expect(page.get_by_role('button',name='新建任务')).to_be_visible()
         page.screenshot(path=str(artifacts/'dashboard-mobile.png'),full_page=True)
+        page.wait_for_timeout(5100)
+        page.set_viewport_size({'width':1512,'height':982})
+        page.screenshot(path=str(artifacts/'dashboard.png'),full_page=True)
         browser.close()
+    temporary.cleanup()
     if errors:
         raise RuntimeError('\n'.join(errors))
-    print(json.dumps({'status':'passed','checks':['task CRUD','weekly schedule','single and batch run','batch toggles','logs','settings persistence','draft preservation','write-only environment','WorkBuddy doctor','responsive layout'],'screenshots':str(ROOT/'data/artifacts')},ensure_ascii=False))
+    print(json.dumps({'status':'passed','checks':['task CRUD','script creation and edit','weekly schedule','single and batch run','batch toggles','logs','settings persistence','draft preservation','write-only environment','WorkBuddy doctor','responsive layout'],'screenshots':str(ROOT/'data/artifacts')},ensure_ascii=False))
 
 
 if __name__=='__main__':

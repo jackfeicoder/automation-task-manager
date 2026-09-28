@@ -56,3 +56,12 @@ class Environment:
         text = re.sub(r'(?i)(Bearer\s+)[^\s"\']+', r'\1[REDACTED]', text)
         text = re.sub(r'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+', '[REDACTED]', text)
         return text
+
+    def sanitize(self,value):
+        if isinstance(value,str):
+            return self.redact(value)
+        if isinstance(value,list):
+            return [self.sanitize(item) for item in value]
+        if isinstance(value,dict):
+            return {key:'[REDACTED]' if re.search(r'token|secret|password|api.?key|cookie',key,re.I) else self.sanitize(item) for key,item in value.items()}
+        return value

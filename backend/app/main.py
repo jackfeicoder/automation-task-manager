@@ -228,7 +228,10 @@ def create_app(root=ROOT, data_dir=None):
         task=store.task(task_id)
         if not task:
             raise HTTPException(404,'任务不存在')
-        return task_directory(root,task.cwd)
+        try:
+            return task_directory(root,task.cwd)
+        except ValueError as error:
+            raise HTTPException(422,str(error)) from None
 
     @app.get('/api/tasks/{task_id}/files')
     def plugin_files(task_id:str):
