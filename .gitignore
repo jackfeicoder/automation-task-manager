@@ -1,0 +1,29 @@
+# Runtime data and browser sessions
+/data/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+/config/*.local.*
+/config/local.json
+*.log
+coverage.xml
+.coverage
+/test-results/
+/playwright-report/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Frontend
+node_modules/
+dist/
+
+# OS files
+.DS_Store
+Thumbs.db
