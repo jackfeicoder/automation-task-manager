@@ -113,6 +113,6 @@ git commit -m "feat: completed step"
 
 已有空仓库时，用 `git remote add origin https://github.com/OWNER/REPO.git` 后推送。名称冲突时创建脚本停止，避免覆盖现有仓库。
 
-实现过程按阶段保留本地提交。当前令牌创建仓库返回 HTTP 403，权限修复前 GitHub 发布待完成。
+实现过程按阶段保留提交，已推送到私有仓库 [jackfeicoder/automation-task-manager](https://github.com/jackfeicoder/automation-task-manager)。环境令牌需要 Administration 读写权限以创建仓库、Contents 读写权限以推送代码，Metadata 只读权限由 GitHub 自动要求。
 
 模块与接口见 [架构文档](docs/architecture.md)。
