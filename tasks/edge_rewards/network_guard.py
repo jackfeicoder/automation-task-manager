@@ -110,19 +110,58 @@ def proxy_reasons(env):
     return reasons
 
 
-def process_reasons():
-    reasons = []
-    import psutil
+def windows_process_names():
+    # A process snapshot contains executable names without opening each process.
+    # psutil can return None for protected Windows processes at normal privileges.
+    if os.name != 'nt':
+        raise NetworkBlocked('进程检查目前仅支持 Windows')
+
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [('dwSize', wintypes.DWORD), ('cntUsage', wintypes.DWORD),
+            ('th32ProcessID', wintypes.DWORD), ('th32DefaultHeapID', ctypes.c_size_t),
+            ('th32ModuleID', wintypes.DWORD), ('cntThreads', wintypes.DWORD),
+            ('th32ParentProcessID', wintypes.DWORD), ('pcPriClassBase', wintypes.LONG),
+            ('dwFlags', wintypes.DWORD), ('szExeFile', wintypes.WCHAR * 260)]
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    for function in (kernel.Process32FirstW, kernel.Process32NextW):
+        function.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+        function.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
+    if handle in (None, ctypes.c_void_p(-1).value):
+        raise NetworkBlocked('读取进程快照失败，停止任务')
+    names = []
     try:
-        for process in psutil.process_iter(['name']):
-            name = process.info.get('name')
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(entry)
+        if not kernel.Process32FirstW(handle, ctypes.byref(entry)):
+            raise NetworkBlocked('读取进程快照失败，停止任务')
+        while True:
+            name = entry.szExeFile.strip()
             if not name:
-                raise NetworkBlocked('部分进程信息未获取，停止任务')
-            if VPN_NAMES.search(name):
-                reasons.append('检测到运行中的 VPN / 代理程序，请退出后运行')
-    except (psutil.Error, OSError):
+                raise NetworkBlocked('进程快照包含未知名称，停止任务')
+            names.append(name)
+            if not kernel.Process32NextW(handle, ctypes.byref(entry)):
+                if ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES
+                    raise NetworkBlocked('进程快照读取中断，停止任务')
+                break
+    finally:
+        kernel.CloseHandle(handle)
+    return names
+
+
+def process_reasons():
+    try:
+        names = windows_process_names()
+    except OSError:
         raise NetworkBlocked('读取进程列表失败，停止任务') from None
-    return reasons
+    if any(VPN_NAMES.search(name) for name in names):
+        return ['检测到运行中的 VPN / 代理程序，请退出后运行']
+    return []
 
 
 def local_snapshot(env):
