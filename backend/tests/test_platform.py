@@ -110,6 +110,16 @@ def test_environment_redaction_and_validation(client, monkeypatch, tmp_path):
     assert client.post('/api/tasks',json=task('origin').model_dump(),headers={'origin':'https://other.example'}).status_code == 403
 
 
+def test_worker_retains_windows_install_directories_without_publishing_keys(monkeypatch, tmp_path):
+    monkeypatch.setenv('PROGRAMFILES', 'C:/Program Files')
+    monkeypatch.setenv('PROGRAMFILES(X86)', 'C:/Program Files (x86)')
+    monkeypatch.setenv('GITHUB_TOKEN', 'local-publishing-value')
+    env = Environment(tmp_path).child([])
+    assert env['PROGRAMFILES'] == 'C:/Program Files'
+    assert env['PROGRAMFILES(X86)'] == 'C:/Program Files (x86)'
+    assert 'GITHUB_TOKEN' not in env
+
+
 def test_deleted_manifest_stays_deleted(client):
     assert client.delete('/api/tasks/example').status_code == 200
     assert client.post('/api/tasks/discover').json()['added'] == []

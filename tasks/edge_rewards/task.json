@@ -1,7 +1,7 @@
 {
   "id": "edge-rewards",
   "name": "Edge Microsoft Rewards",
-  "description": "按当天页面执行搜索、简单点击及支持的问答/投票，单项失败跳过并关闭页面；全程检查 VPN、代理及地区。",
+  "description": "按当天页面执行搜索、简单点击及支持的问答/投票，单项失败跳过并关闭页面；默认允许 VPN 和代理网络。",
   "enabled": false,
   "command": ["{python}", "main.py", "--run"],
   "cwd": "tasks/edge_rewards",
@@ -10,5 +10,5 @@
   "max_attempts": 1,
   "resource_group": "edge-rewards-local-account",
   "daily_once": false,
-  "env_names": ["REWARDS_COUNTRY_CODE", "REWARDS_SEARCH_COUNT", "REWARDS_SEARCH_INTERVAL", "REWARDS_ACTION_WAIT", "REWARDS_MAX_ACTIVITIES", "REWARDS_HEADLESS", "REWARDS_POLL_OPTION"]
+  "env_names": ["REWARDS_REQUIRE_DIRECT_NETWORK", "REWARDS_COUNTRY_CODE", "REWARDS_SEARCH_COUNT", "REWARDS_SEARCH_INTERVAL", "REWARDS_ACTION_WAIT", "REWARDS_MAX_ACTIVITIES", "REWARDS_HEADLESS", "REWARDS_POLL_OPTION"]
 }

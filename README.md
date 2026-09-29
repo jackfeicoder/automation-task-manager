@@ -14,7 +14,7 @@ Task Harbor 是运行在本机的自动化任务管理平台。通过网页管�
 - **运行环境**：使用 Python venv，支持本地环境变量配置，变量值保存后不回显。
 - **脚本扩展**：扫描插件目录发现新任务，在界面创建、修改脚本；修改前备份，Python 脚本保存时检查语法。
 - **WorkBuddy 签到**：读取本机客户端登录状态，执行每日签到，显示成功、今日已完成或需要重新登录等结果。
-- **Edge Rewards**：使用独立 Edge 登录状态，执行支持的积分活动与桌面搜索，核对积分变化；启动前检查 VPN、代理和出口地区，运行中持续复查。
+- **Edge Rewards**：使用独立 Edge 登录状态，按当天页面处理支持的积分活动与桌面搜索，核对积分变化；默认允许 VPN 和代理，可选启用直接网络检查。
 
 ## 部署
 
@@ -76,7 +76,7 @@ cd automation-task-manager
 ./scripts/setup.ps1 -Browser
 ```
 
-退出 VPN / 代理程序，关闭 Windows 系统代理、PAC 和「自动检测设置」。任务默认按中国大陆 `CN` 检查出口；其他实际所在地区在「运行环境」设置 `REWARDS_COUNTRY_CODE`。
+任务默认使用当前网络，VPN、Windows 系统代理、WinHTTP 代理和出口地区不会阻止启动。需要启用直接网络检查时，在「运行环境」设置 `REWARDS_REQUIRE_DIRECT_NETWORK=true`，并按实际所在地区设置 `REWARDS_COUNTRY_CODE`。
 
 首次手动登录：
 
@@ -84,7 +84,7 @@ cd automation-task-manager
 ./.venv/Scripts/python.exe tasks/edge_rewards/main.py --login
 ```
 
-网络检查通过后会打开独立 Edge 窗口，由你手动登录微软账号。登录状态只保存在本机 `data/profiles/edge-rewards/`，与日常 Edge 配置分开。
+命令会打开独立 Edge 窗口，由你手动登录微软账号。登录状态只保存在本机 `data/profiles/edge-rewards/`，与日常 Edge 配置分开。
 
 可以创建本机搜索词文件，每行填写一个需要查询的内容；不创建时任务会自动使用仓库内的三个非敏感示例词：
 
@@ -102,9 +102,12 @@ notepad data/rewards/queries.txt
 
 搜索上限从当前积分明细读取，支持页面显示的加倍额度；达到上限、搜索词用完或等待一次后仍未确认增长，结束本轮搜索。结果只记录服务端确认的完成状态和实际余额变化，不保证每天领取所有积分。执行明细保存在本机 `data/rewards/last-run.json`，也可在网页查看任务结果和日志。
 
+本机搜索词文件为空、格式异常或读取失败时，仅跳过补充桌面搜索，继续当天活动。Edge 缺失、独立配置被占用、首次登录以及连接失败会显示对应的处理提示；网络错误只记录错误代码，不输出含登录参数的完整地址。
+
 | 运行环境变量 | 默认值 | 用途 |
 |---|---|---|
-| `REWARDS_COUNTRY_CODE` | `CN` | 实际所在地区的两字母代码 |
+| `REWARDS_REQUIRE_DIRECT_NETWORK` | `false` | 是否启用 VPN、代理、路由及出口地区拦截 |
+| `REWARDS_COUNTRY_CODE` | `CN` | 仅启用直接网络检查时使用的地区代码 |
 | `REWARDS_SEARCH_COUNT` | `10` | 每次桌面搜索数量，0 表示只处理活动 |
 | `REWARDS_SEARCH_INTERVAL` | `15` | 搜索后等待秒数，范围 10–120 |
 | `REWARDS_ACTION_WAIT` | `10` | 活动后等待秒数，范围 5–60 |
@@ -112,9 +115,9 @@ notepad data/rewards/queries.txt
 | `REWARDS_HEADLESS` | `false` | 是否隐藏任务运行时的浏览器窗口 |
 | `REWARDS_POLL_OPTION` | 空 | 投票时选择的完整选项文字，未匹配则跳过 |
 
-可单独运行 `--doctor` 检查网络，不访问微软网站。检查使用两个外部 IP 地区服务，分别核对可用的 IPv4 / IPv6 出口；查询失败、结果不一致或运行中网络变化均会停止任务。
+可单独运行 `--doctor` 检查浏览器依赖和网络检查开关，不访问微软网站。默认不查询出口地区；开启直接网络检查后，才使用两个外部 IP 地区服务核对 IPv4 / IPv6 出口。
 
-本机检测和 IP 地区查询存在边界：路由器 VPN 或未知分流可能未被识别，微软的地区判定也可能与查询服务不同。请在整个运行期间保持 VPN 关闭。微软条款限制自动搜索，使用自动化仍可能导致账号受限，详见 [Microsoft Rewards 条款](https://www.microsoft.com/en-US/servicesagreement)。
+网站显示的登录、地区限制或验证提示仍会记录为需要处理。实际活动资格和积分以微软页面为准，详见 [Microsoft Rewards 条款](https://www.microsoft.com/en-US/servicesagreement)。
 
 任务实现参考了 [bing-rewards-auto](https://github.com/dwgx/bing-rewards-auto) 的独立会话及操作后核对积分思路，具体功能以本项目说明为准。
 

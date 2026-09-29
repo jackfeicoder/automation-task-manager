@@ -39,6 +39,7 @@ class Environment:
         # GitHub and platform credentials are deliberately absent from child environments.
         base_names = ('PATH','PATHEXT','SYSTEMROOT','WINDIR','COMSPEC','TEMP','TMP','HOME','USERPROFILE',
                       'LOCALAPPDATA','APPDATA','LANG','LC_ALL','SSL_CERT_FILE','SSL_CERT_DIR',
+                      'PROGRAMFILES','PROGRAMFILES(X86)','PROGRAMW6432','SYSTEMDRIVE',
                       'HTTP_PROXY','HTTPS_PROXY','NO_PROXY')
         env = {key: os.environ[key] for key in base_names if key in os.environ}
         for name in names:

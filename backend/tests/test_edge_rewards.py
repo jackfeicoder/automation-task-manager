@@ -170,6 +170,7 @@ def test_network_guard_blocks_before_browser_import_or_launch(monkeypatch):
     class Guard:
         def __init__(self, env):
             self.error = None
+            self.enabled = True
 
         def start(self):
             events.append('start')

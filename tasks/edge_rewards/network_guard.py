@@ -1,4 +1,4 @@
-"""Fail closed before Microsoft traffic; detection is evidence, not a VPN guarantee."""
+"""Optional direct-network checks, disabled by default."""
 import base64
 import ctypes
 from ctypes import wintypes
@@ -259,8 +259,12 @@ def check_country(expected, families):
 class NetworkGuard:
     def __init__(self, env):
         self.env = env
+        setting = env.get('REWARDS_REQUIRE_DIRECT_NETWORK', 'false').strip().lower()
+        if setting not in ('false', 'true', '0', '1'):
+            raise ValueError('REWARDS_REQUIRE_DIRECT_NETWORK 应为 true 或 false')
+        self.enabled = setting in ('true', '1')
         self.country = env.get('REWARDS_COUNTRY_CODE', 'CN').strip().upper() or 'CN'
-        if not re.fullmatch('[A-Z]{2}', self.country):
+        if self.enabled and not re.fullmatch('[A-Z]{2}', self.country):
             raise NetworkBlocked('REWARDS_COUNTRY_CODE 应为两个字母的实际所在地区代码')
         self.error = None
         self.stop_event = threading.Event()
@@ -268,6 +272,8 @@ class NetworkGuard:
         self.last_country_check = 0
 
     def start(self):
+        if not self.enabled:
+            return
         self.baseline = local_snapshot(self.env)
         self.families = sorted({6 if route['DestinationPrefix'] == '::/0' else 4 for route in json.loads(self.baseline)['routes']})
         self.address = check_country(self.country, self.families)
@@ -279,6 +285,8 @@ class NetworkGuard:
     def check(self, full=False):
         if self.error:
             raise NetworkBlocked(self.error)
+        if not self.enabled:
+            return
         reasons = proxy_reasons(self.env) + process_reasons()
         if reasons:
             self.error = '；'.join(reasons)

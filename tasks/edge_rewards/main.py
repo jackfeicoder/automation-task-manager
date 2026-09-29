@@ -35,6 +35,41 @@ def result(status, message, **data):
     return {'status': status, 'message': message, 'data': data}
 
 
+def edge_executable():
+    if os.name != 'nt':
+        raise ValueError('Rewards 插件需要 Windows 和 Microsoft Edge')
+    drive = os.environ.get('SYSTEMDRIVE', 'C:')
+    roots = [os.environ.get('LOCALAPPDATA'), os.environ.get('PROGRAMFILES(X86)'),
+             os.environ.get('PROGRAMFILES'), os.environ.get('PROGRAMW6432'),
+             drive + '/Program Files (x86)', drive + '/Program Files']
+    for root in roots:
+        if root:
+            path = Path(root) / 'Microsoft/Edge/Application/msedge.exe'
+            if path.is_file():
+                return str(path)
+    raise ValueError('未找到已安装的 Microsoft Edge；请先安装 Edge 后重跑')
+
+
+def browser_failure(error, stage):
+    # Surface useful browser codes without returning URLs, tokens or raw traces.
+    code = re.search(r'\bERR_[A-Z_]+\b', str(error))
+    if code:
+        hints = {
+            'ERR_PROXY_CONNECTION_FAILED': '当前系统代理连接失败，请检查代理程序是否运行及代理端口',
+            'ERR_TUNNEL_CONNECTION_FAILED': '当前代理隧道连接失败，请检查代理线路',
+            'ERR_NAME_NOT_RESOLVED': '域名解析失败，请检查当前网络的 DNS',
+            'ERR_INTERNET_DISCONNECTED': '当前网络未连接',
+            'ERR_CONNECTION_TIMED_OUT': '网站连接超时，请检查当前网络或稍后重跑',
+            'ERR_CERT_AUTHORITY_INVALID': '网站证书验证失败，请在 Edge 中检查证书提示',
+        }
+        identifier = code.group()
+        return f'{stage}未完成：{identifier}；' + hints.get(identifier, '请检查当前网络或在 Edge 中手动打开网站')
+    if type(error).__name__ == 'TimeoutError':
+        return f'{stage}超时；请检查当前网络是否能打开 Rewards，或稍后重跑'
+    hint = '请检查 Edge 安装及独立窗口是否被占用' if stage == '启动 Edge' else '请检查页面是否能打开、登录是否有效及页面适配'
+    return f'{stage}未完成（{type(error).__name__}）；{hint}'
+
+
 @dataclass
 class Options:
     searches: int
@@ -72,7 +107,10 @@ def profile_lock():
     sys.path.insert(0, str(ROOT))
     from backend.app.storage.instance import InstanceLock
     PROFILE.parent.mkdir(parents=True, exist_ok=True)
-    lock = InstanceLock(PROFILE.parent / 'edge-rewards.lock')
+    try:
+        lock = InstanceLock(PROFILE.parent / 'edge-rewards.lock')
+    except RuntimeError:
+        raise ValueError('Rewards 登录窗口或另一个任务正在使用独立 Edge 配置；请结束后重跑') from None
     try:
         yield
     finally:
@@ -80,9 +118,12 @@ def profile_lock():
 
 
 def host_allowed(url):
-    parsed = urlsplit(url)
-    return (parsed.scheme == 'https' and not parsed.username and not parsed.password
-        and parsed.port in (None, 443) and any(parsed.hostname == host or (parsed.hostname or '').endswith('.' + host) for host in MICROSOFT_HOSTS))
+    try:
+        parsed = urlsplit(url)
+        return (parsed.scheme == 'https' and not parsed.username and not parsed.password
+            and parsed.port in (None, 443) and any(parsed.hostname == host or (parsed.hostname or '').endswith('.' + host) for host in MICROSOFT_HOSTS))
+    except ValueError:
+        return False
 
 
 def gate_requests(context, guard):
@@ -353,7 +394,7 @@ def queries(count):
 def run_tasks(context, page, guard, options, terms):
     before = dashboard(page, guard)
     if before is None:
-        return result('needs_login', '登录状态或积分余额未识别，请先运行 --login；若已登录，请更新页面适配')
+        return result('needs_login', '独立 Edge 窗口尚未登录或余额未识别。请在项目目录运行 ./.venv/Scripts/python.exe tasks/edge_rewards/main.py --login，登录后重跑')
     ledger = []
     attempts = 0
     seen = set()
@@ -502,26 +543,39 @@ def local_environment():
 
 def execute(mode='run', env=None):
     guard = None
+    stage = '配置读取'
     try:
         env = local_environment() if env is None else env
         options = Options.load(env)
-        terms = queries(options.searches) if mode == 'run' else []
+        terms = []
+        if mode == 'run':
+            try:
+                terms = queries(options.searches)
+            except (ValueError, OSError):
+                print('桌面搜索词表缺失、为空或格式异常；本轮继续处理当天活动，跳过额外桌面搜索。', flush=True)
         guard = NetworkGuard(env)
-        print('检查 VPN、代理、网卡、路由和出口地区…', flush=True)
-        guard.start()  # Must complete before importing/launching a browser.
-        if mode == 'doctor':
-            return result('success', '本次网络检查通过；运行任务时会再次检查', country=guard.country)
+        print('检查 VPN、代理和地区…' if guard.enabled else 'VPN、系统代理、WinHTTP 代理和出口地区检查已关闭；使用当前网络。', flush=True)
+        guard.start()
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
             return result('needs_attention', '请先安装 requirements-browser.txt 中的浏览器依赖')
+        executable = edge_executable()
+        if mode == 'doctor':
+            return result('success', 'Edge 和浏览器依赖已就绪；' + ('网络检查已通过' if guard.enabled else 'VPN / 代理不阻断任务'), network_check=guard.enabled)
+        stage = '启动 Edge'
         with profile_lock(), sync_playwright() as playwright:
             guard.check(full=True)
+            browser_args = ['--disable-extensions', '--disable-background-networking',
+                '--disable-component-update', '--disable-sync', '--no-first-run', '--no-default-browser-check']
+            if guard.enabled:
+                browser_args.append('--no-proxy-server')
             context = playwright.chromium.launch_persistent_context(str(PROFILE), channel='msedge',
+                executable_path=executable,
                 headless=False if mode == 'login' else options.headless, service_workers='block',
-                args=['--no-proxy-server', '--disable-extensions', '--disable-background-networking',
-                    '--disable-component-update', '--disable-sync', '--no-first-run', '--no-default-browser-check'])
+                args=browser_args)
             try:
+                stage = '加载 Rewards 页面'
                 gate_requests(context, guard)
                 page = context.pages[0] if context.pages else context.new_page()
                 if mode == 'login':
@@ -540,15 +594,19 @@ def execute(mode='run', env=None):
                     return result('needs_login', '登录等待超时，请重新运行 --login')
                 return run_tasks(context, page, guard, options, terms)
             finally:
-                context.close()
+                # Cleanup must not override the actual task result or failure.
+                try:
+                    context.close()
+                except Exception:
+                    print('Edge 清理未完成；请关闭本任务的独立窗口。', flush=True)
     except NetworkBlocked as error:
-        return result('needs_attention', '网络保护已拦截：' + str(error))
+        return result('needs_attention', '任务需要处理：' + str(error))
     except ValueError as error:
         return result('needs_attention', str(error))
-    except Exception:
+    except Exception as error:
         if guard and guard.error:
-            return result('needs_attention', '网络保护已拦截：' + guard.error)
-        return result('needs_attention', 'Edge 操作未完成；请检查 Edge 安装、独立配置目录占用、登录状态或页面适配')
+            return result('needs_attention', '任务需要处理：' + guard.error)
+        return result('needs_attention', browser_failure(error, stage))
     finally:
         if guard:
             guard.close()
@@ -557,8 +615,8 @@ def execute(mode='run', env=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument('--login', action='store_true', help='通过网络检查后打开 Edge，手动登录')
-    modes.add_argument('--doctor', action='store_true', help='仅检查网络，不访问微软网站')
+    modes.add_argument('--login', action='store_true', help='打开独立 Edge 窗口，手动登录')
+    modes.add_argument('--doctor', action='store_true', help='检查依赖及可选网络检查，不访问微软网站')
     modes.add_argument('--run', action='store_true', help='执行积分任务')
     args = parser.parse_args()
     outcome = execute('login' if args.login else 'doctor' if args.doctor else 'run')

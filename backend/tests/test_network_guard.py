@@ -96,3 +96,28 @@ def test_process_api_failure_remains_blocking(monkeypatch):
     monkeypatch.setattr(guard, 'windows_process_names', broken)
     with pytest.raises(guard.NetworkBlocked, match='读取进程列表失败'):
         guard.process_reasons()
+
+
+def test_default_mode_does_not_read_vpn_proxy_or_region(monkeypatch):
+    def prohibited(*args, **kwargs):
+        pytest.fail('Default mode must not run direct-network checks')
+    for name in ['proxy_reasons', 'process_reasons', 'local_snapshot', 'check_country']:
+        monkeypatch.setattr(guard, name, prohibited)
+    check = guard.NetworkGuard({'HTTPS_PROXY': 'http://localhost:7890',
+                                'REWARDS_COUNTRY_CODE': 'unused'})
+    check.start()
+    check.check()
+    check.check(full=True)
+    check.close()
+    assert not check.enabled
+    assert check.thread is None
+
+
+def test_explicit_direct_network_check_remains_available(monkeypatch):
+    def blocked(*args, **kwargs):
+        raise guard.NetworkBlocked('VPN detected')
+    monkeypatch.setattr(guard, 'local_snapshot', blocked)
+    check = guard.NetworkGuard({'REWARDS_REQUIRE_DIRECT_NETWORK': 'true'})
+    with pytest.raises(guard.NetworkBlocked, match='VPN detected'):
+        check.start()
+    check.close()
