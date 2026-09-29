@@ -52,7 +52,7 @@ def create(name):
     print(json.dumps({'url': repository['html_url'], 'owner': user, 'private': repository['private']}))
 
 
-def push():
+def push(force=False):
     if not (os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')):
         raise RuntimeError('GitHub token is missing')
     from verify_publish import verify
@@ -72,16 +72,21 @@ def push():
             launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{helper}" "$@"\n')
             launcher.chmod(0o700)
         env = {**os.environ, 'GIT_ASKPASS': str(launcher), 'GIT_TERMINAL_PROMPT': '0'}
-        git('-c', 'credential.helper=', 'push', '-u', 'origin', 'main', env=env)
+        command = ['-c', 'credential.helper=', 'push']
+        if force:
+            command.append('--force-with-lease')
+        command.extend(['-u', 'origin', 'main'])
+        git(*command, env=env)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['create', 'push'])
     parser.add_argument('--name', default='automation-task-manager')
+    parser.add_argument('--force', action='store_true', help='允许历史重写后的首次推送')
     args = parser.parse_args()
     try:
-        create(args.name) if args.action == 'create' else push()
+        create(args.name) if args.action == 'create' else push(args.force)
     except (RuntimeError, subprocess.CalledProcessError) as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)
