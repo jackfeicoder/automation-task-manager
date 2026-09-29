@@ -142,6 +142,7 @@ def test_popups_close_even_when_offer_action_times_out(monkeypatch):
     monkeypatch.setattr(rewards, 'expand_tasks', lambda *args: None)
     monkeypatch.setattr(rewards, 'discover', lambda p: [offer])
     monkeypatch.setattr(rewards, 'find_card', lambda *args: SimpleNamespace(click=click))
+    monkeypatch.setattr(rewards, 'dismiss_completion', lambda *args: False)
     guard = SimpleNamespace(check=lambda **kw: None)
     with pytest.raises(TimeoutError):
         rewards.visit_offer(context, page, guard, rewards.Options(0, 15, 10, 30, True), offer)
@@ -163,7 +164,8 @@ def test_search_accepts_ready_results_when_other_resources_are_still_loading():
         if kwargs.get('wait_until') != 'domcontentloaded':
             raise TimeoutError('A delayed widget never completes the load event')
 
-    page = SimpleNamespace(locator=lambda selector: field, wait_for_url=wait_for_url)
+    page = SimpleNamespace(locator=lambda selector: field, wait_for_url=wait_for_url,
+                           bring_to_front=lambda: None)
     rewards.submit_search(page, SimpleNamespace(check=lambda **kw: None), 'venv')
     assert events == ['venv', 'Enter']
 
@@ -172,6 +174,7 @@ def test_profile_counters_can_arrive_after_dom_loaded(monkeypatch):
     responses = iter([None, None, {'balance': 100, 'progress': 25, 'maximum': 100}])
     waits = []
     monkeypatch.setattr(rewards, 'state', lambda page: next(responses))
+    monkeypatch.setattr(rewards, 'dismiss_completion', lambda *args: False)
     monkeypatch.setattr(rewards, 'pause', lambda p,g,seconds: waits.append(seconds))
     assert rewards.loaded_state(None, None)['balance'] == 100
     assert waits == [1, 1]
@@ -179,13 +182,41 @@ def test_profile_counters_can_arrive_after_dom_loaded(monkeypatch):
 
 def test_missing_login_does_not_wait_forever(monkeypatch):
     monkeypatch.setattr(rewards, 'state', lambda page: None)
+    monkeypatch.setattr(rewards, 'dismiss_completion', lambda *args: False)
     assert rewards.loaded_state(None, None, timeout=0) is None
+
+
+def test_click_retries_once_only_after_known_completion_notice_is_closed(monkeypatch):
+    dismissals = iter([False, True])
+    attempts = []
+    monkeypatch.setattr(rewards, 'dismiss_completion', lambda *args: next(dismissals))
+
+    def click(**kwargs):
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise TimeoutError('Completion notice intercepted the click')
+
+    rewards.click_ready(SimpleNamespace(click=click), None, None)
+    assert len(attempts) == 2
+
+
+def test_other_blocking_dialog_does_not_trigger_click_retry(monkeypatch):
+    attempts = []
+    monkeypatch.setattr(rewards, 'dismiss_completion', lambda *args: False)
+
+    def click(**kwargs):
+        attempts.append(True)
+        raise TimeoutError('An unrecognized dialog is blocking the page')
+
+    with pytest.raises(TimeoutError):
+        rewards.click_ready(SimpleNamespace(click=click), None, None)
+    assert len(attempts) == 1
 
 
 def test_claim_waits_for_dialog_and_accepts_multiline_button(monkeypatch):
     ready = False
     claimed = []
-    button = SimpleNamespace(count=lambda: 1, inner_text=lambda: '可领取\n10\n领取', click=lambda **kw: None)
+    button = SimpleNamespace(count=lambda: 1, inner_text=lambda: '可领取\n10\n领取', press=lambda *args,**kw: None)
 
     def wait(**kwargs):
         nonlocal ready
@@ -194,12 +225,13 @@ def test_claim_waits_for_dialog_and_accepts_multiline_button(monkeypatch):
     def dialog_button(role, name):
         assert ready, 'The dialog contents are loaded asynchronously'
         if name.search('10\n待领取\n领取积分'):
-            return SimpleNamespace(count=lambda: 1, click=lambda **kw: claimed.append(True))
+            return SimpleNamespace(count=lambda: 1, press=lambda *args,**kw: claimed.append(True))
         return SimpleNamespace(count=lambda: 0)
 
     dialog = SimpleNamespace(wait_for=wait, get_by_role=dialog_button)
     page = SimpleNamespace(get_by_role=lambda role, name: dialog if role == 'dialog' else button)
     monkeypatch.setattr(rewards, 'view', lambda *args: None)
+    monkeypatch.setattr(rewards, 'dismiss_completion', lambda *args: False)
     monkeypatch.setattr(rewards, 'pause', lambda *args: None)
     rewards.claim_pending(page, SimpleNamespace(check=lambda **kw: None), rewards.Options(0,15,10,30,False))
     assert claimed == [True]

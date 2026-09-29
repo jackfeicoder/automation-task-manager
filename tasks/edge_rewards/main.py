@@ -207,6 +207,7 @@ def state(page):
 
 def dashboard(page, guard, wait=3):
     guard.check(full=True)
+    page.bring_to_front()
     page.goto(DASHBOARD, wait_until='domcontentloaded', timeout=30000)
     pause(page, guard, wait)
     return loaded_state(page, guard)
@@ -216,14 +217,42 @@ def loaded_state(page, guard, timeout=12):
     # The current React page can finish DOM loading before profile counters arrive.
     deadline = time.monotonic() + timeout
     while True:
+        dismiss_completion(page, guard)
         current = state(page)
         if current is not None or time.monotonic() >= deadline:
             return current
         pause(page, guard, 1)
 
 
+def dismiss_completion(page, guard):
+    # This delayed success notice blocks the underlying controls after refresh.
+    # Only its explicit Close button is handled; other dialogs stay untouched.
+    dialog = page.get_by_role('dialog', name=re.compile(r'^(干得漂亮|Well done|Nicely done)$', re.I))
+    if dialog.count() == 1 and dialog.is_visible():
+        close = dialog.get_by_role('button', name=re.compile(r'^(关闭|Close)$', re.I))
+        if close.count() == 1:
+            guard.check(full=True)
+            # The notice can place its footer below a small desktop viewport.
+            # Keyboard activation uses the same explicit Close control.
+            close.press('Enter', timeout=5000)
+            pause(page, guard, 1)
+            return True
+    return False
+
+
+def click_ready(control, page, guard, timeout=5000):
+    dismiss_completion(page, guard)
+    try:
+        control.click(timeout=timeout)
+    except Exception as error:
+        if type(error).__name__ != 'TimeoutError' or not dismiss_completion(page, guard):
+            raise
+        control.click(timeout=timeout)
+
+
 def view(page, guard, url):
     guard.check(full=True)
+    page.bring_to_front()
     page.goto(url, wait_until='domcontentloaded', timeout=30000)
     pause(page, guard, 3)
     current = loaded_state(page, guard)
@@ -272,6 +301,7 @@ def close_children(context, original):
 
 
 def submit_search(page, guard, term):
+    page.bring_to_front()
     field = page.locator('#sb_form_q')
     field.wait_for(state='visible', timeout=10000)
     field.fill(term)
@@ -338,7 +368,7 @@ def visit_offer(context, page, guard, options, card):
     original = list(context.pages)
     try:
         guard.check(full=True)
-        anchor.click(timeout=10000)
+        click_ready(anchor, page, guard, timeout=10000)
         pause(page, guard, 2)
         if live['kind'] == 'explore':
             term = explore_term(live)
@@ -376,14 +406,15 @@ def claim_pending(page, guard, options):
     match = re.search(r'\b([\d,]+)\b', button.inner_text())
     if not match or int(match[1].replace(',', '')) == 0:
         return
-    button.click(timeout=5000)
+    dismiss_completion(page, guard)
+    button.press('Enter', timeout=5000)
     pause(page, guard, 1)
     dialog = page.get_by_role('dialog', name=re.compile(r'^(领取积分|Claim points)$', re.I))
     dialog.wait_for(state='visible', timeout=10000)
     claim = dialog.get_by_role('button', name=re.compile(r'^\d[\d,]*\s*(?:待领取|pending)[\s\S]*?(?:领取积分|Claim points)$', re.I))
     if claim.count() == 1:
         guard.check(full=True)
-        claim.click(timeout=5000)
+        claim.press('Enter', timeout=5000)
         pause(page, guard, options.action_wait)
     else:
         close = dialog.get_by_role('button', name=re.compile(r'^(关闭|Close)$', re.I))
@@ -497,6 +528,7 @@ def run_tasks(context, page, guard, options, terms):
             if search_page is None:
                 search_page = context.new_page()
             guard.check(full=True)
+            search_page.bring_to_front()
             search_page.goto('https://www.bing.com/', wait_until='domcontentloaded', timeout=30000)
             submit_search(search_page, guard, term)
             pause(search_page, guard, options.interval)
