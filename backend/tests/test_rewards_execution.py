@@ -22,6 +22,9 @@ def offline_browser(monkeypatch):
         def opener(self):
             return None
 
+        def set_viewport_size(self, size):
+            assert not self.user, 'Existing user page viewport must stay unchanged'
+
         def is_closed(self):
             return self.closed
 

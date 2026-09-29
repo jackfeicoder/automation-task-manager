@@ -67,6 +67,9 @@ class TaskPages:
     def _own(self, page):
         if page not in self.owned:
             self.owned.append(page)
+            # Set metrics on this task target only. Desktop windows may be
+            # minimized or have a tiny client area while the task is running.
+            page.set_viewport_size({'width': 1280, 'height': 900})
             for pattern, handler in self.routes:
                 page.route(pattern, handler)
 

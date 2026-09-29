@@ -12,6 +12,10 @@ class Page:
         self.parent = parent
         self.closed = False
         self.routes = []
+        self.viewport = None
+
+    def set_viewport_size(self, size):
+        self.viewport = size
 
     def opener(self):
         return self.parent
@@ -58,6 +62,8 @@ def test_cleanup_closes_task_pages_only_even_when_user_opens_tabs():
     user_new_tab = context.new_page()
     user_popup = context.new_page(parent=original)
     assert task.pages == [work, popup, nested]
+    assert work.viewport == popup.viewport == nested.viewport == {'width': 1280, 'height': 900}
+    assert original.viewport is None and user_new_tab.viewport is None and user_popup.viewport is None
     task.close()
     assert work.closed and popup.closed and nested.closed
     assert not original.closed and not user_new_tab.closed and not user_popup.closed

@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import sys
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 if __package__:
     from .network_guard import NetworkBlocked, NetworkGuard
@@ -162,7 +162,7 @@ def state(page):
         };
         let balance = user ? number(user.availablePoints) : null;
         if (balance === null) {
-            const profile = Array.from(document.querySelectorAll('header button, [role="banner"] button'))
+            const profile = Array.from(document.querySelectorAll('button[aria-label]'))
                 .find(n => /^(查看个人资料|View profile|Profile)$/i.test(n.getAttribute('aria-label') || ''));
             if (profile) {
                 for (const node of profile.querySelectorAll('p')) {
@@ -209,6 +209,7 @@ def dashboard(page, guard, wait=3):
     guard.check(full=True)
     page.bring_to_front()
     page.goto(DASHBOARD, wait_until='domcontentloaded', timeout=30000)
+    page.bring_to_front()
     pause(page, guard, wait)
     return loaded_state(page, guard)
 
@@ -254,10 +255,19 @@ def view(page, guard, url):
     guard.check(full=True)
     page.bring_to_front()
     page.goto(url, wait_until='domcontentloaded', timeout=30000)
+    page.bring_to_front()
     pause(page, guard, 3)
     current = loaded_state(page, guard)
     if current is None:
-        raise ValueError('页面登录状态或积分余额未识别')
+        parsed = urlsplit(page.url)
+        rewards_page = (parsed.hostname in ('rewards.bing.com', 'rewards.microsoft.com')
+                        and '/welcome' not in parsed.path)
+        # Balance and activity widgets load independently. A working points
+        # control is enough for reading quota; balance is required at run start/end.
+        points_control = page.get_by_role('button', name=re.compile(r'^(今日积分|Today.s points)', re.I))
+        balance_link = page.get_by_role('link', name=re.compile(r'^(可用积分|Available points)', re.I))
+        if not rewards_page or not (points_control.count() == 1 or balance_link.count() == 1):
+            raise ValueError('页面登录状态或积分余额未识别')
     return current
 
 
@@ -265,11 +275,11 @@ def expand_tasks(page, guard):
     names = re.compile(r'^(每日活动|Daily activities|Daily activity|在必应上浏览|Explore on Bing|日常任务|More activities|任务|Quests)$', re.I)
     for button in page.get_by_role('button', name=names).all():
         if button.get_attribute('aria-expanded') == 'false':
-            button.click(timeout=5000)
+            button.press('Enter', timeout=5000)
             pause(page, guard, 1)
     more = page.get_by_role('button', name=re.compile(r'^(显示更多|Show more)$', re.I))
     if more.count() == 1 and more.is_visible():
-        more.click(timeout=5000)
+        more.press('Enter', timeout=5000)
         pause(page, guard, 1)
 
 
@@ -278,14 +288,16 @@ def read_quota(page, guard):
     button = page.get_by_role('button', name=re.compile(r'^(今日积分|Today.s points)', re.I))
     if button.count() != 1:
         return None
-    button.click(timeout=5000)
+    dismiss_completion(page, guard)
+    button.press('Enter', timeout=5000)
     pause(page, guard, 1)
     dialog = page.get_by_role('dialog', name=re.compile(r'^(积分明细|Points breakdown)$', re.I))
+    dialog.wait_for(state='visible', timeout=10000)
     if dialog.count() != 1:
         raise ValueError('搜索额度窗口未识别')
     quota = quota_text(dialog.inner_text())
     close = dialog.get_by_role('button', name=re.compile(r'^(关闭|Close)$', re.I))
-    close.first.click(timeout=5000)
+    close.first.press('Enter', timeout=5000)
     pause(page, guard, 1)
     return quota
 
@@ -302,11 +314,11 @@ def close_children(context, original):
 
 def submit_search(page, guard, term):
     page.bring_to_front()
-    field = page.locator('#sb_form_q')
-    field.wait_for(state='visible', timeout=10000)
-    field.fill(term)
     guard.check(full=True)
-    field.press('Enter')
+    # Use Bing's ordinary visible search URL. Its homepage field can render
+    # before keyboard handlers initialize, silently dropping Enter presses.
+    page.goto('https://www.bing.com/search?' + urlencode({'q': term}),
+              wait_until='domcontentloaded', timeout=30000)
     # Search results are usable before delayed images or widgets finish loading.
     page.wait_for_url(re.compile(r'^https://(?:www\.)?bing\.com/search\?'),
                       wait_until='domcontentloaded', timeout=30000)
@@ -427,7 +439,7 @@ def browse_home_sections(page, guard):
         button = page.get_by_role('button', name=name, exact=True)
         if button.count() == 1 and button.get_attribute('aria-expanded') == 'false':
             guard.check(full=True)
-            button.click(timeout=5000)
+            button.press('Enter', timeout=5000)
             pause(page, guard, 2)
 
 
@@ -528,8 +540,6 @@ def run_tasks(context, page, guard, options, terms):
             if search_page is None:
                 search_page = context.new_page()
             guard.check(full=True)
-            search_page.bring_to_front()
-            search_page.goto('https://www.bing.com/', wait_until='domcontentloaded', timeout=30000)
             submit_search(search_page, guard, term)
             pause(search_page, guard, options.interval)
             updated = read_quota(page, guard)

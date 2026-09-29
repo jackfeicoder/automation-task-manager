@@ -155,19 +155,23 @@ def test_unknown_quiz_never_chooses_random_answer():
 
 
 def test_search_accepts_ready_results_when_other_resources_are_still_loading():
+    from urllib.parse import parse_qs, urlsplit
     events = []
-    field = SimpleNamespace(wait_for=lambda **kw: None, fill=lambda term: events.append(term),
-                            press=lambda key: events.append(key))
+
+    def goto(url, **kwargs):
+        assert kwargs['wait_until'] == 'domcontentloaded'
+        assert urlsplit(url).hostname == 'www.bing.com'
+        events.append(parse_qs(urlsplit(url).query)['q'][0])
 
     def wait_for_url(pattern, **kwargs):
         assert pattern.match('https://www.bing.com/search?q=venv')
         if kwargs.get('wait_until') != 'domcontentloaded':
             raise TimeoutError('A delayed widget never completes the load event')
 
-    page = SimpleNamespace(locator=lambda selector: field, wait_for_url=wait_for_url,
+    page = SimpleNamespace(goto=goto, wait_for_url=wait_for_url,
                            bring_to_front=lambda: None)
-    rewards.submit_search(page, SimpleNamespace(check=lambda **kw: None), 'venv')
-    assert events == ['venv', 'Enter']
+    rewards.submit_search(page, SimpleNamespace(check=lambda **kw: None), 'venv 中文 & a+b')
+    assert events == ['venv 中文 & a+b']
 
 
 def test_profile_counters_can_arrive_after_dom_loaded(monkeypatch):
@@ -235,6 +239,45 @@ def test_claim_waits_for_dialog_and_accepts_multiline_button(monkeypatch):
     monkeypatch.setattr(rewards, 'pause', lambda *args: None)
     rewards.claim_pending(page, SimpleNamespace(check=lambda **kw: None), rewards.Options(0,15,10,30,False))
     assert claimed == [True]
+
+
+def test_quota_dialog_uses_keyboard_controls_in_small_window(monkeypatch):
+    actions = []
+    ready = False
+
+    def render(**kwargs):
+        nonlocal ready
+        ready = True
+
+    def pointer_click(**kwargs):
+        raise TimeoutError('Control is outside the pointer viewport')
+
+    close = SimpleNamespace(press=lambda key,**kw: actions.append('close'),click=pointer_click)
+    dialog = SimpleNamespace(wait_for=render,count=lambda: int(ready),
+        inner_text=lambda: '必应搜索\n30/100',
+        get_by_role=lambda role,name: SimpleNamespace(first=close))
+    button = SimpleNamespace(count=lambda: 1,press=lambda key,**kw: actions.append('open'),click=pointer_click)
+    page = SimpleNamespace(get_by_role=lambda role,name: dialog if role=='dialog' else button)
+    monkeypatch.setattr(rewards, 'view', lambda *args: None)
+    monkeypatch.setattr(rewards, 'dismiss_completion', lambda *args: False)
+    monkeypatch.setattr(rewards, 'pause', lambda *args: None)
+    assert rewards.read_quota(page, None) == (30,100)
+    assert actions == ['open','close']
+
+
+@pytest.mark.parametrize('location,valid', [(rewards.EARN_PAGE, True),
+    ('https://rewards.bing.com/welcome',False), ('https://example.org/earn',False)])
+def test_points_control_can_load_before_balance_but_not_on_login_or_other_sites(monkeypatch,location,valid):
+    page = SimpleNamespace(url=location,bring_to_front=lambda: None,goto=lambda *args,**kwargs: None,
+        get_by_role=lambda role,name: SimpleNamespace(count=lambda: int(role=='button')))
+    monkeypatch.setattr(rewards, 'loaded_state', lambda *args: None)
+    monkeypatch.setattr(rewards, 'pause', lambda *args: None)
+    guard = SimpleNamespace(check=lambda **kwargs: None)
+    if valid:
+        assert rewards.view(page,guard,location) is None
+    else:
+        with pytest.raises(ValueError):
+            rewards.view(page,guard,location)
 
 
 def test_poll_preference_comes_from_managed_configuration(monkeypatch):
