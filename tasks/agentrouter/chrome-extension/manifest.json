@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Task Harbor · Agent Router 签到",
+  "version": "1.1.0",
+  "description": "连接本机任务管理器，使用当前 Chrome 登录状态执行 Agent Router 重新登录签到。",
+  "permissions": ["alarms", "storage", "debugger"],
+  "host_permissions": ["http://127.0.0.1:18765/*", "https://agentrouter.org/*"],
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [{"matches": ["https://agentrouter.org/*"], "js": ["content.js"]}],
+  "action": {"default_title": "立即检查 Agent Router 签到任务"}
+}

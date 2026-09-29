@@ -1,6 +1,6 @@
 # Task Harbor · 自动化任务管理
 
-Task Harbor 是运行在本机的自动化任务管理平台。通过网页管理多个脚本的执行时间、运行状态和配置，适合每日签到、周期性脚本和其他重复任务。内置 WorkBuddy 每日签到和 Edge Microsoft Rewards 插件。
+Task Harbor 是运行在本机的自动化任务管理平台。通过网页管理多个脚本的执行时间、运行状态和配置，适合每日签到、周期性脚本和其他重复任务。内置 WorkBuddy 每日签到、Agent Router 每日签到和 Edge Microsoft Rewards 插件。
 
 ## 功能
 
@@ -14,6 +14,7 @@ Task Harbor 是运行在本机的自动化任务管理平台。通过网页管�
 - **运行环境**：使用 Python venv，支持本地环境变量配置，变量值保存后不回显。
 - **脚本扩展**：扫描插件目录发现新任务，在界面创建、修改脚本；修改前备份，Python 脚本保存时检查语法。
 - **WorkBuddy 签到**：读取本机客户端登录状态，执行每日签到，显示成功、今日已完成或需要重新登录等结果。
+- **Agent Router 签到**：在桌面 Chrome 中退出 Agent Router，再使用已有 GitHub 登录状态重新登录；自动关闭任务创建的页面。
 - **Edge Rewards**：连接日常使用的桌面 Edge，复用已有登录信息，按当天页面处理支持的积分活动与桌面搜索；默认允许 VPN 和代理。
 
 ## 部署
@@ -130,6 +131,27 @@ notepad data/rewards/queries.txt
 网站显示的登录、地区限制或验证提示仍会记录为需要处理。实际活动资格和积分以微软页面为准，详见 [Microsoft Rewards 条款](https://www.microsoft.com/en-US/servicesagreement)。
 
 任务实现参考了 [bing-rewards-auto](https://github.com/dwgx/bing-rewards-auto) 的独立会话及操作后核对积分思路，具体功能以本项目说明为准。
+
+### Agent Router 每日签到
+
+使用日常桌面 Chrome 的原有用户配置和 GitHub 登录状态，不需要复制浏览器配置或导出 Cookie。首次准备本机扩展：
+
+```powershell
+./scripts/setup_agentrouter.ps1
+```
+
+1. 在已登录的桌面 Chrome 打开 `chrome://extensions`，开启「开发者模式」。
+2. 点击「加载已解压的扩展程序」，选择项目中的 `data/agentrouter/chrome-extension` 目录。
+3. 保持这个 Chrome 打开，在任务管理页面点击「扫描插件」。
+4. 手动运行 **Agent Router 每日签到**，再按需开启定时任务。
+
+扩展申请 Agent Router 页面、本机签到连接地址和 Chrome `debugger` 输入权限。输入权限用于对 GitHub 登录按钮发送鼠标点击，代码只临时连接本任务新建的 Agent Router 页面，操作后立即断开，不连接原有页面、不读取浏览器凭据。Chrome 可能显示扩展调试提示。配对配置和生成的扩展只保存在忽略上传的 `data/agentrouter/`，随机配对密钥只用于本机连接。重新执行准备脚本后，在 Chrome 扩展页面点击「重新加载」即可更新；配对信息保持不变。
+
+默认定时关闭，时间为每天 **09:10，Asia/Shanghai**，每日流程成功后跳过重复执行。频率、开关和手动单个／批量执行均通过任务管理界面设置。服务与已加载扩展的桌面 Chrome 需要保持运行；Chrome 关闭、扩展未连接或本机端口 18765 被占用时，会显示处理提示。
+
+每次新建一个工作页面，点击账户菜单的「退出」，确认登录页出现后点击「使用 GitHub 继续」，等待原页面或本次打开的登录页面返回控制台。登录本来已过期时直接执行 GitHub 登录。结束时关闭本任务创建的页面及其登录子页面，保留原有页面。GitHub 密码、验证码或新的授权确认需要在 Chrome 手动处理，任务不会自动点击授权按钮。
+
+任务只执行退出和 GitHub 重新登录，不检查签到记录或赠送额度。只接收流程状态，不读取 API 密钥、浏览器 Cookie 或账号存储。可运行 `.venv/Scripts/python.exe tasks/agentrouter/main.py --doctor` 检查本机配对配置。
 
 ### 添加脚本
 

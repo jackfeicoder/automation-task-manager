@@ -1,0 +1,14 @@
+{
+  "id": "agentrouter",
+  "name": "Agent Router 每日签到",
+  "description": "使用桌面 Chrome 的现有登录状态，退出 Agent Router 后通过 GitHub 重新登录。首次运行前加载本机签到扩展。",
+  "enabled": false,
+  "command": ["{python}", "main.py"],
+  "cwd": "tasks/agentrouter",
+  "schedule": {"kind": "daily", "time": "09:10", "timezone": "Asia/Shanghai"},
+  "timeout_seconds": 210,
+  "max_attempts": 1,
+  "resource_group": "agentrouter-chrome-account",
+  "daily_once": true,
+  "env_names": []
+}
