@@ -153,6 +153,58 @@ def test_unknown_quiz_never_chooses_random_answer():
     rewards.answer_quiz(page, None, None)  # No choice locator or click is available.
 
 
+def test_search_accepts_ready_results_when_other_resources_are_still_loading():
+    events = []
+    field = SimpleNamespace(wait_for=lambda **kw: None, fill=lambda term: events.append(term),
+                            press=lambda key: events.append(key))
+
+    def wait_for_url(pattern, **kwargs):
+        assert pattern.match('https://www.bing.com/search?q=venv')
+        if kwargs.get('wait_until') != 'domcontentloaded':
+            raise TimeoutError('A delayed widget never completes the load event')
+
+    page = SimpleNamespace(locator=lambda selector: field, wait_for_url=wait_for_url)
+    rewards.submit_search(page, SimpleNamespace(check=lambda **kw: None), 'venv')
+    assert events == ['venv', 'Enter']
+
+
+def test_profile_counters_can_arrive_after_dom_loaded(monkeypatch):
+    responses = iter([None, None, {'balance': 100, 'progress': 25, 'maximum': 100}])
+    waits = []
+    monkeypatch.setattr(rewards, 'state', lambda page: next(responses))
+    monkeypatch.setattr(rewards, 'pause', lambda p,g,seconds: waits.append(seconds))
+    assert rewards.loaded_state(None, None)['balance'] == 100
+    assert waits == [1, 1]
+
+
+def test_missing_login_does_not_wait_forever(monkeypatch):
+    monkeypatch.setattr(rewards, 'state', lambda page: None)
+    assert rewards.loaded_state(None, None, timeout=0) is None
+
+
+def test_claim_waits_for_dialog_and_accepts_multiline_button(monkeypatch):
+    ready = False
+    claimed = []
+    button = SimpleNamespace(count=lambda: 1, inner_text=lambda: '可领取\n10\n领取', click=lambda **kw: None)
+
+    def wait(**kwargs):
+        nonlocal ready
+        ready = True
+
+    def dialog_button(role, name):
+        assert ready, 'The dialog contents are loaded asynchronously'
+        if name.search('10\n待领取\n领取积分'):
+            return SimpleNamespace(count=lambda: 1, click=lambda **kw: claimed.append(True))
+        return SimpleNamespace(count=lambda: 0)
+
+    dialog = SimpleNamespace(wait_for=wait, get_by_role=dialog_button)
+    page = SimpleNamespace(get_by_role=lambda role, name: dialog if role == 'dialog' else button)
+    monkeypatch.setattr(rewards, 'view', lambda *args: None)
+    monkeypatch.setattr(rewards, 'pause', lambda *args: None)
+    rewards.claim_pending(page, SimpleNamespace(check=lambda **kw: None), rewards.Options(0,15,10,30,False))
+    assert claimed == [True]
+
+
 def test_poll_preference_comes_from_managed_configuration(monkeypatch):
     options = rewards.Options.load({'REWARDS_POLL_OPTION': 'My displayed option'})
     clicked = []

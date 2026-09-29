@@ -11,10 +11,12 @@ POINTS = re.compile(r'\+\s*(\d+)|earn\s+(\d+)\s+points|赚取\s*(\d+)\s*积分',
 CARD_DOM = r'''() => Array.from(document.querySelectorAll('main a[href]')).map(a => {
     const section = a.closest('[role="group"]');
     const title = a.querySelector('h3, p, img[alt]');
+    const label = node => node ? node.getAttribute('aria-label') || node.innerText || '' : '';
     return {href: a.getAttribute('href'),
         title: title ? (title.innerText || title.getAttribute('alt') || '') : a.innerText,
         text: a.innerText, group: section ? section.getAttribute('aria-label') ||
-            (section.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => document.getElementById(id)?.innerText || '').join(' ') : '',
+            (section.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => label(document.getElementById(id))).join(' ').trim()
+            || a.closest('section')?.querySelector('h2')?.innerText || '' : '',
         disabled: a.getAttribute('aria-disabled') === 'true',
         visible: !!a.getBoundingClientRect().width};
 })'''

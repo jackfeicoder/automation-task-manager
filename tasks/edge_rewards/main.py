@@ -15,13 +15,14 @@ from urllib.parse import urlsplit
 
 if __package__:
     from .network_guard import NetworkBlocked, NetworkGuard
+    from .desktop_browser import attach, endpoint_url, probe_desktop_edge
     from .page_tasks import EARN_PAGE, discover, explore_term, find_card, identity, quota_text
 else:
     from network_guard import NetworkBlocked, NetworkGuard
+    from desktop_browser import attach, endpoint_url, probe_desktop_edge
     from page_tasks import EARN_PAGE, discover, explore_term, find_card, identity, quota_text
 
 ROOT = Path(__file__).resolve().parents[2]
-PROFILE = ROOT / 'data/profiles/edge-rewards'
 QUERIES = ROOT / 'data/rewards/queries.txt'
 EXAMPLE_QUERIES = Path(__file__).with_name('queries.example.txt')
 DASHBOARD = 'https://rewards.bing.com/dashboard'
@@ -103,14 +104,15 @@ class Options:
 
 @contextmanager
 def profile_lock():
-    # CLI login and scheduled tasks must not open the same browser profile together.
+    # One Rewards operation at a time; the actual profile remains owned by Edge.
     sys.path.insert(0, str(ROOT))
     from backend.app.storage.instance import InstanceLock
-    PROFILE.parent.mkdir(parents=True, exist_ok=True)
+    directory = ROOT / 'data/rewards'
+    directory.mkdir(parents=True, exist_ok=True)
     try:
-        lock = InstanceLock(PROFILE.parent / 'edge-rewards.lock')
+        lock = InstanceLock(directory / 'edge-rewards.lock')
     except RuntimeError:
-        raise ValueError('Rewards 登录窗口或另一个任务正在使用独立 Edge 配置；请结束后重跑') from None
+        raise ValueError('另一个 Rewards 操作正在使用桌面 Edge；请结束后重跑') from None
     try:
         yield
     finally:
@@ -207,14 +209,24 @@ def dashboard(page, guard, wait=3):
     guard.check(full=True)
     page.goto(DASHBOARD, wait_until='domcontentloaded', timeout=30000)
     pause(page, guard, wait)
-    return state(page)
+    return loaded_state(page, guard)
+
+
+def loaded_state(page, guard, timeout=12):
+    # The current React page can finish DOM loading before profile counters arrive.
+    deadline = time.monotonic() + timeout
+    while True:
+        current = state(page)
+        if current is not None or time.monotonic() >= deadline:
+            return current
+        pause(page, guard, 1)
 
 
 def view(page, guard, url):
     guard.check(full=True)
     page.goto(url, wait_until='domcontentloaded', timeout=30000)
     pause(page, guard, 3)
-    current = state(page)
+    current = loaded_state(page, guard)
     if current is None:
         raise ValueError('页面登录状态或积分余额未识别')
     return current
@@ -257,6 +269,17 @@ def close_children(context, original):
                 child.close()
             except Exception:
                 pass
+
+
+def submit_search(page, guard, term):
+    field = page.locator('#sb_form_q')
+    field.wait_for(state='visible', timeout=10000)
+    field.fill(term)
+    guard.check(full=True)
+    field.press('Enter')
+    # Search results are usable before delayed images or widgets finish loading.
+    page.wait_for_url(re.compile(r'^https://(?:www\.)?bing\.com/search\?'),
+                      wait_until='domcontentloaded', timeout=30000)
 
 
 def answer_quiz(page, guard, options):
@@ -324,12 +347,7 @@ def visit_offer(context, page, guard, options, card):
             child = next((p for p in context.pages if p not in original), None)
             if child is None:
                 return 'skipped', '任务未打开搜索页'
-            field = child.locator('#sb_form_q')
-            field.wait_for(state='visible', timeout=10000)
-            field.fill(term)
-            guard.check(full=True)
-            field.press('Enter')
-            child.wait_for_url(re.compile(r'^https://(?:www\.)?bing\.com/search\?'), timeout=30000)
+            submit_search(child, guard, term)
         pause(page, guard, options.action_wait)
         child = next((p for p in context.pages if p not in original), None)
         if child is not None and '/rewards/checkuser' in live['href']:
@@ -361,7 +379,8 @@ def claim_pending(page, guard, options):
     button.click(timeout=5000)
     pause(page, guard, 1)
     dialog = page.get_by_role('dialog', name=re.compile(r'^(领取积分|Claim points)$', re.I))
-    claim = dialog.get_by_role('button', name=re.compile(r'^\d[\d,]*\s*(?:待领取|pending).*?(?:领取积分|Claim points)$', re.I))
+    dialog.wait_for(state='visible', timeout=10000)
+    claim = dialog.get_by_role('button', name=re.compile(r'^\d[\d,]*\s*(?:待领取|pending)[\s\S]*?(?:领取积分|Claim points)$', re.I))
     if claim.count() == 1:
         guard.check(full=True)
         claim.click(timeout=5000)
@@ -394,7 +413,7 @@ def queries(count):
 def run_tasks(context, page, guard, options, terms):
     before = dashboard(page, guard)
     if before is None:
-        return result('needs_login', '独立 Edge 窗口尚未登录或余额未识别。请在项目目录运行 ./.venv/Scripts/python.exe tasks/edge_rewards/main.py --login，登录后重跑')
+        return result('needs_login', '桌面 Edge 当前配置未登录 Rewards 或余额未识别。请在该 Edge 的 Rewards 页面确认登录，或用 start_edge.ps1 -ProfileDirectory "Profile 1" 选择你已登录的配置后重跑')
     ledger = []
     attempts = 0
     seen = set()
@@ -479,12 +498,7 @@ def run_tasks(context, page, guard, options, terms):
                 search_page = context.new_page()
             guard.check(full=True)
             search_page.goto('https://www.bing.com/', wait_until='domcontentloaded', timeout=30000)
-            field = search_page.locator('#sb_form_q')
-            field.wait_for(state='visible', timeout=10000)
-            field.fill(term)
-            guard.check(full=True)
-            field.press('Enter')
-            search_page.wait_for_url(re.compile(r'^https://(?:www\.)?bing\.com/search\?'), timeout=30000)
+            submit_search(search_page, guard, term)
             pause(search_page, guard, options.interval)
             updated = read_quota(page, guard)
             if updated is not None and updated[0] == quota[0]:
@@ -560,28 +574,22 @@ def execute(mode='run', env=None):
             from playwright.sync_api import sync_playwright
         except ImportError:
             return result('needs_attention', '请先安装 requirements-browser.txt 中的浏览器依赖')
-        executable = edge_executable()
+        edge_executable()
         if mode == 'doctor':
-            return result('success', 'Edge 和浏览器依赖已就绪；' + ('网络检查已通过' if guard.enabled else 'VPN / 代理不阻断任务'), network_check=guard.enabled)
-        stage = '启动 Edge'
+            probe_desktop_edge(endpoint_url(env))
+            return result('success', '桌面 Edge 连接已就绪；' + ('网络检查已通过' if guard.enabled else 'VPN / 代理不阻断任务'), network_check=guard.enabled)
+        stage = '连接桌面 Edge'
         with profile_lock(), sync_playwright() as playwright:
             guard.check(full=True)
-            browser_args = ['--disable-extensions', '--disable-background-networking',
-                '--disable-component-update', '--disable-sync', '--no-first-run', '--no-default-browser-check']
-            if guard.enabled:
-                browser_args.append('--no-proxy-server')
-            context = playwright.chromium.launch_persistent_context(str(PROFILE), channel='msedge',
-                executable_path=executable,
-                headless=False if mode == 'login' else options.headless, service_workers='block',
-                args=browser_args)
+            context = attach(playwright, env)
             try:
                 stage = '加载 Rewards 页面'
                 gate_requests(context, guard)
-                page = context.pages[0] if context.pages else context.new_page()
+                page = context.new_page()
                 if mode == 'login':
                     guard.check(full=True)
                     page.goto(DASHBOARD, wait_until='domcontentloaded', timeout=30000)
-                    print('请在 Edge 窗口手动登录微软账号；登录信息仅保存在本机独立配置目录。', flush=True)
+                    print('请在桌面 Edge 的任务页面确认微软登录；使用原有浏览器配置。', flush=True)
                     deadline = time.monotonic() + 600
                     while time.monotonic() < deadline:
                         pause(page, guard, 2)
@@ -590,7 +598,7 @@ def execute(mode='run', env=None):
                             page.goto('https://www.bing.com/', wait_until='domcontentloaded', timeout=30000)
                             pause(page, guard, 3)
                             if dashboard(page, guard):
-                                return result('success', '登录状态已保存在本机，可手动运行 Rewards 任务')
+                                return result('success', '桌面 Edge 的 Rewards 登录已就绪，可手动运行任务')
                     return result('needs_login', '登录等待超时，请重新运行 --login')
                 return run_tasks(context, page, guard, options, terms)
             finally:
@@ -598,7 +606,7 @@ def execute(mode='run', env=None):
                 try:
                     context.close()
                 except Exception:
-                    print('Edge 清理未完成；请关闭本任务的独立窗口。', flush=True)
+                    print('任务页面清理未完成；请关闭本任务打开的页面。', flush=True)
     except NetworkBlocked as error:
         return result('needs_attention', '任务需要处理：' + str(error))
     except ValueError as error:
@@ -615,7 +623,7 @@ def execute(mode='run', env=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument('--login', action='store_true', help='打开独立 Edge 窗口，手动登录')
+    modes.add_argument('--login', action='store_true', help='连接桌面 Edge，在任务页面确认登录')
     modes.add_argument('--doctor', action='store_true', help='检查依赖及可选网络检查，不访问微软网站')
     modes.add_argument('--run', action='store_true', help='执行积分任务')
     args = parser.parse_args()
