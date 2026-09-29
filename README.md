@@ -86,7 +86,7 @@ cd automation-task-manager
 
 网络检查通过后会打开独立 Edge 窗口，由你手动登录微软账号。登录状态只保存在本机 `data/profiles/edge-rewards/`，与日常 Edge 配置分开。
 
-创建搜索词文件，每行填写一个需要查询的内容：
+可以创建本机搜索词文件，每行填写一个需要查询的内容；不创建时任务会自动使用仓库内的三个非敏感示例词：
 
 ```powershell
 New-Item -ItemType Directory -Force data/rewards
