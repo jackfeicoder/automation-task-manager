@@ -74,7 +74,7 @@ def push(force=False):
         env = {**os.environ, 'GIT_ASKPASS': str(launcher), 'GIT_TERMINAL_PROMPT': '0'}
         command = ['-c', 'credential.helper=', 'push']
         if force:
-            command.append('--force-with-lease')
+            command.append('--force')
         command.extend(['-u', 'origin', 'main'])
         git(*command, env=env)
 
