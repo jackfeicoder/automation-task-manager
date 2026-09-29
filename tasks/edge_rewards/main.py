@@ -11,23 +11,24 @@ from pathlib import Path
 import re
 import sys
 import time
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 if __package__:
     from .network_guard import NetworkBlocked, NetworkGuard
+    from .page_tasks import EARN_PAGE, discover, explore_term, find_card, identity, quota_text
 else:
     from network_guard import NetworkBlocked, NetworkGuard
+    from page_tasks import EARN_PAGE, discover, explore_term, find_card, identity, quota_text
 
 ROOT = Path(__file__).resolve().parents[2]
 PROFILE = ROOT / 'data/profiles/edge-rewards'
 QUERIES = ROOT / 'data/rewards/queries.txt'
+EXAMPLE_QUERIES = Path(__file__).with_name('queries.example.txt')
 DASHBOARD = 'https://rewards.bing.com/dashboard'
 MICROSOFT_HOSTS = ('bing.com', 'bing.net', 'microsoft.com', 'microsoftonline.com',
     'live.com', 'msn.com', 'msauth.net', 'msauthimages.net', 'msftauth.net',
-    'msftauthimages.net', 'msecnd.net', 'azureedge.net', 'akamaized.net')
-COMPLETE = re.compile(r'completed|already earned|已完成|已获得|已獲得|已完成', re.I)
-LOCKED = re.compile(r'locked|tomorrow|expired|not available|已锁定|已鎖定|明天|已过期', re.I)
-EARN = re.compile(r'earn\s*\+?\s*\d+\s*points|(?:赚取|獲得|获得|贏取)\s*\d+\s*(?:积分|積分)|\+\s*\d+\s*(?:积分|積分)', re.I)
+    'msftauthimages.net', 'msecnd.net', 'azureedge.net', 'akamaized.net',
+    'youtube.com', 'ytimg.com', 'googlevideo.com', 'tiktok.com', 'tiktokcdn.com', 'tiktokv.com')
 
 
 def result(status, message, **data):
@@ -41,6 +42,7 @@ class Options:
     action_wait: int
     activities: int
     headless: bool
+    poll_option: str = ''
 
     @classmethod
     def load(cls, env):
@@ -55,10 +57,13 @@ class Options:
         headless = env.get('REWARDS_HEADLESS', 'false').lower().strip()
         if headless not in ('true', 'false', '1', '0'):
             raise ValueError('REWARDS_HEADLESS 应为 true 或 false')
+        preference = env.get('REWARDS_POLL_OPTION', '').strip()
+        if len(preference) > 200:
+            raise ValueError('REWARDS_POLL_OPTION 最多 200 字符')
         return cls(number('REWARDS_SEARCH_COUNT', 10, 0, 50),
             number('REWARDS_SEARCH_INTERVAL', 15, 10, 120),
             number('REWARDS_ACTION_WAIT', 10, 5, 60),
-            number('REWARDS_MAX_ACTIVITIES', 10, 0, 30), headless in ('true', '1'))
+            number('REWARDS_MAX_ACTIVITIES', 30, 0, 100), headless in ('true', '1'), preference)
 
 
 @contextmanager
@@ -114,6 +119,16 @@ def state(page):
         };
         let balance = user ? number(user.availablePoints) : null;
         if (balance === null) {
+            const profile = Array.from(document.querySelectorAll('header button, [role="banner"] button'))
+                .find(n => /^(查看个人资料|View profile|Profile)$/i.test(n.getAttribute('aria-label') || ''));
+            if (profile) {
+                for (const node of profile.querySelectorAll('p')) {
+                    balance = number(node.innerText);
+                    if (balance !== null) break;
+                }
+            }
+        }
+        if (balance === null) {
             for (const selector of ['#availablePoints', '#balanceToolTipDiv', '#id_rc', '[data-testid="rewards-points"]']) {
                 const node = document.querySelector(selector);
                 if (node && node.getBoundingClientRect().width) {
@@ -154,42 +169,182 @@ def dashboard(page, guard, wait=3):
     return state(page)
 
 
-def cards(page, guard):
-    # Expand only the daily-activity disclosure, never account/purchase/consent buttons.
-    disclosure = page.get_by_role('button', name=re.compile(r'^(?:每日活动|每日活動|Daily activities|Daily activity)$', re.I))
-    if disclosure.count() == 1 and disclosure.get_attribute('aria-expanded') == 'false':
-        guard.check(full=True)
-        disclosure.click(timeout=5000)
+def view(page, guard, url):
+    guard.check(full=True)
+    page.goto(url, wait_until='domcontentloaded', timeout=30000)
+    pause(page, guard, 3)
+    current = state(page)
+    if current is None:
+        raise ValueError('页面登录状态或积分余额未识别')
+    return current
+
+
+def expand_tasks(page, guard):
+    names = re.compile(r'^(每日活动|Daily activities|Daily activity|在必应上浏览|Explore on Bing|日常任务|More activities|任务|Quests)$', re.I)
+    for button in page.get_by_role('button', name=names).all():
+        if button.get_attribute('aria-expanded') == 'false':
+            button.click(timeout=5000)
+            pause(page, guard, 1)
+    more = page.get_by_role('button', name=re.compile(r'^(显示更多|Show more)$', re.I))
+    if more.count() == 1 and more.is_visible():
+        more.click(timeout=5000)
         pause(page, guard, 1)
-    found = []
-    anchors = page.locator('a[href]')
-    for index in range(anchors.count()):
-        anchor = anchors.nth(index)
-        text = ' '.join((anchor.get_attribute('aria-label') or '', anchor.inner_text(), anchor.get_attribute('title') or ''))
-        href = anchor.get_attribute('href') or ''
-        if not anchor.is_visible() or not EARN.search(text) or COMPLETE.search(text) or LOCKED.search(text):
-            continue
-        url = urlsplit(href)
-        form = parse_qs(url.query).get('form', [''])[0]
-        # Task families requiring answers, downloads, purchases or app/device
-        # impersonation remain manual. Restrict clicks to ordinary Bing search offers.
-        if url.scheme != 'https' or url.hostname not in ('www.bing.com', 'bing.com') or url.path != '/search':
-            continue
-        if not re.match(r'^(?:ML2X|ML1|tgrew)', form, re.I):
-            continue
-        if re.search(r'quiz|puzzle|redeem|purchase|兑换|購買|购买|测验|測驗', text + href, re.I):
-            continue
-        if href not in {item['href'] for item in found}:
-            found.append({'href': href})
-    return found
+
+
+def read_quota(page, guard):
+    view(page, guard, EARN_PAGE)
+    button = page.get_by_role('button', name=re.compile(r'^(今日积分|Today.s points)', re.I))
+    if button.count() != 1:
+        return None
+    button.click(timeout=5000)
+    pause(page, guard, 1)
+    dialog = page.get_by_role('dialog', name=re.compile(r'^(积分明细|Points breakdown)$', re.I))
+    if dialog.count() != 1:
+        raise ValueError('搜索额度窗口未识别')
+    quota = quota_text(dialog.inner_text())
+    close = dialog.get_by_role('button', name=re.compile(r'^(关闭|Close)$', re.I))
+    close.first.click(timeout=5000)
+    pause(page, guard, 1)
+    return quota
+
+
+def close_children(context, original):
+    # Close only pages created by this operation, including unexpected popups.
+    for child in list(context.pages):
+        if child not in original:
+            try:
+                child.close()
+            except Exception:
+                pass
+
+
+def answer_quiz(page, guard, options):
+    # Match displayed questions to explicit local answers. Unknown questions skip;
+    # never inspect hidden answers, click random options or handle CAPTCHAs.
+    answer_file = ROOT / 'data/rewards/quiz-answers.json'
+    if not answer_file.is_file():
+        answer_file = Path(__file__).with_name('quiz-answers.example.json')
+    answers = json.loads(answer_file.read_text(encoding='utf-8-sig'))
+    if not isinstance(answers, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in answers.items()):
+        return
+    handled = set()
+    for _ in range(5):
+        text = page.locator('body').inner_text()
+        if re.search(r'captcha|verify you.re human|验证.*真人|异常活动', text, re.I):
+            raise NetworkBlocked('页面显示验证提示，请在客户端手动处理')
+        question = next((q for q in answers if q in text and q not in handled), None)
+        if question is None:
+            return
+        choice = page.get_by_role('link', name=answers[question], exact=True)
+        if choice.count() != 1:
+            return
+        handled.add(question)
+        guard.check(full=True)
+        choice.click(timeout=5000)
+        pause(page, guard, 3)
+        next_button = page.get_by_role('button', name=re.compile(r'^(下一题|Next question|查看结果|See results)$', re.I))
+        if next_button.count() == 1:
+            next_button.click(timeout=5000)
+            pause(page, guard, 3)
+
+
+def vote_poll(page, guard, preference):
+    # An empty preference only opens the poll and verifies completion. A user can
+    # configure the exact visible option in the UI, without storing a credential.
+    if not preference:
+        return
+    choice = page.get_by_role('link', name=preference, exact=True)
+    if choice.count() == 1:
+        guard.check(full=True)
+        choice.click(timeout=5000)
+        pause(page, guard, 3)
+
+
+def visit_offer(context, page, guard, options, card):
+    view(page, guard, card['source'])
+    expand_tasks(page, guard)
+    live = next((c for c in discover(page) if identity(c) == identity(card)), None)
+    if live is None or live['kind'] == 'completed':
+        return 'already_completed', '任务已完成或不再显示'
+    if live['kind'] in ('manual', 'waiting'):
+        return 'skipped', live['reason']
+    anchor = find_card(page, live)
+    if anchor is None:
+        return 'skipped', '任务入口已变化'
+    original = list(context.pages)
+    try:
+        guard.check(full=True)
+        anchor.click(timeout=10000)
+        pause(page, guard, 2)
+        if live['kind'] == 'explore':
+            term = explore_term(live)
+            if not term:
+                return 'skipped', '未识别此任务的搜索主题'
+            child = next((p for p in context.pages if p not in original), None)
+            if child is None:
+                return 'skipped', '任务未打开搜索页'
+            field = child.locator('#sb_form_q')
+            field.wait_for(state='visible', timeout=10000)
+            field.fill(term)
+            guard.check(full=True)
+            field.press('Enter')
+            child.wait_for_url(re.compile(r'^https://(?:www\.)?bing\.com/search\?'), timeout=30000)
+        pause(page, guard, options.action_wait)
+        child = next((p for p in context.pages if p not in original), None)
+        if child is not None and '/rewards/checkuser' in live['href']:
+            if 'PollScenarioId' in live['href'] or re.search(r'投票|poll', live['text'], re.I):
+                vote_poll(child, guard, options.poll_option)
+            else:
+                answer_quiz(child, guard, options)
+    finally:
+        close_children(context, original)
+    view(page, guard, card['source'])
+    expand_tasks(page, guard)
+    after = next((c for c in discover(page) if identity(c) == identity(card)), None)
+    if after and after['kind'] == 'completed':
+        return 'completed', '页面确认已完成'
+    if card['quest_child'] and after is None:
+        return 'progress_confirmed', '子任务入口已完成并移除；整体奖励以最终余额为准'
+    # Some quizzes credit on opening. If not complete, do not guess answers or loop.
+    return 'skipped', '完成状态未确认；可能需答题、客户端或冷却，继续其他任务'
+
+
+def claim_pending(page, guard, options):
+    view(page, guard, DASHBOARD)
+    button = page.get_by_role('button', name=re.compile(r'^(可领取|Claimable)', re.I))
+    if button.count() != 1:
+        return
+    match = re.search(r'\b([\d,]+)\b', button.inner_text())
+    if not match or int(match[1].replace(',', '')) == 0:
+        return
+    button.click(timeout=5000)
+    pause(page, guard, 1)
+    dialog = page.get_by_role('dialog', name=re.compile(r'^(领取积分|Claim points)$', re.I))
+    claim = dialog.get_by_role('button', name=re.compile(r'^\d[\d,]*\s*(?:待领取|pending).*?(?:领取积分|Claim points)$', re.I))
+    if claim.count() == 1:
+        guard.check(full=True)
+        claim.click(timeout=5000)
+        pause(page, guard, options.action_wait)
+    else:
+        close = dialog.get_by_role('button', name=re.compile(r'^(关闭|Close)$', re.I))
+        if close.count():
+            close.first.click(timeout=5000)
+
+
+def browse_home_sections(page, guard):
+    for name in ['福利', '你的进度', '每日活动', '活动', '精选兑换', '成就勋章']:
+        button = page.get_by_role('button', name=name, exact=True)
+        if button.count() == 1 and button.get_attribute('aria-expanded') == 'false':
+            guard.check(full=True)
+            button.click(timeout=5000)
+            pause(page, guard, 2)
 
 
 def queries(count):
     if count == 0:
         return []
-    if not QUERIES.is_file():
-        raise ValueError('请先创建 data/rewards/queries.txt，每行填写一个搜索词；也可将搜索数量设为 0')
-    lines = list(dict.fromkeys(line.strip() for line in QUERIES.read_text(encoding='utf-8-sig').splitlines() if line.strip() and not line.lstrip().startswith('#')))
+    source = QUERIES if QUERIES.is_file() else EXAMPLE_QUERIES
+    lines = list(dict.fromkeys(line.strip() for line in source.read_text(encoding='utf-8-sig').splitlines() if line.strip() and not line.lstrip().startswith('#')))
     if not lines or any(len(line) > 200 for line in lines):
         raise ValueError('搜索词文件应包含非空搜索词，每行最多 200 字符')
     return lines[:count]
@@ -199,67 +354,137 @@ def run_tasks(context, page, guard, options, terms):
     before = dashboard(page, guard)
     if before is None:
         return result('needs_login', '登录状态或积分余额未识别，请先运行 --login；若已登录，请更新页面适配')
-    completed = 0
+    ledger = []
+    attempts = 0
+    seen = set()
+    print('读取首页和赚取页；完成页面立即关闭，单项失败继续。', flush=True)
+
+    def note(title, status, reason):
+        ledger.append({'task': title, 'status': status, 'reason': reason})
+        print(f'{title}: {reason}', flush=True)
+
+    def attempt(card):
+        nonlocal attempts
+        if attempts >= options.activities:
+            note(card['title'], 'skipped', '本次活动数量上限')
+            return
+        attempts += 1
+        try:
+            status, reason = visit_offer(context, page, guard, options, card)
+            note(card['title'], status, reason)
+        except NetworkBlocked:
+            raise
+        except Exception as error:
+            note(card['title'], 'skipped', f'操作未完成（{type(error).__name__}），继续下一项')
+
+    if options.activities:
+        try:
+            claim_pending(page, guard, options)
+            view(page, guard, DASHBOARD)
+            browse_home_sections(page, guard)
+        except NetworkBlocked:
+            raise
+        except Exception as error:
+            note('待领取积分与首页栏目', 'skipped', f'页面需适配（{type(error).__name__}）')
+        # Refresh discovery after each page: a level upgrade can unlock new offers.
+        for source in [DASHBOARD, EARN_PAGE]:
+            try:
+                view(page, guard, source)
+                expand_tasks(page, guard)
+                offers = discover(page)
+            except NetworkBlocked:
+                raise
+            except Exception as error:
+                note('活动列表', 'skipped', f'页面未识别（{type(error).__name__}），继续下一页')
+                continue
+            for card in offers:
+                if identity(card) in seen:
+                    continue
+                seen.add(identity(card))
+                if card['kind'] == 'completed':
+                    continue
+                if card['kind'] in ('manual', 'waiting'):
+                    note(card['title'], 'skipped', card['reason'])
+                elif card['kind'] == 'quest':
+                    try:
+                        view(page, guard, card['href'])
+                        children = discover(page)
+                        for child in children:
+                            if child['kind'] in ('visit', 'explore'):
+                                attempt(child)
+                            elif child['kind'] != 'completed':
+                                note(card['title'] + ' / ' + child['title'], 'skipped', child['reason'])
+                    except NetworkBlocked:
+                        raise
+                    except Exception as error:
+                        note(card['title'], 'skipped', f'子任务页面未识别（{type(error).__name__}）')
+                else:
+                    attempt(card)
+
     searches = 0
-    balance = before['balance']
-    print('已读取积分余额，开始处理支持的任务。', flush=True)
-    offers = cards(page, guard)[:options.activities]
-    for index, offer in enumerate(offers, 1):
-        guard.check(full=True)
-        anchor = page.locator('a[href]')
-        # Attribute comparison avoids interpolating untrusted card URLs into CSS.
-        match = None
-        for candidate in anchor.all():
-            if candidate.is_visible() and candidate.get_attribute('href') == offer['href']:
-                match = candidate
+    search_reason = '未设置搜索词'
+    quota = None
+    search_page = None
+    try:
+        quota = read_quota(page, guard) if terms else None
+        for term in terms:
+            if quota is None or quota[1] <= 0:
+                search_reason = '搜索额度未识别，跳过搜索'
                 break
-        if match is None:
-            continue
-        old_pages = list(context.pages)
-        match.click(timeout=10000)
-        pause(page, guard, options.action_wait)
-        for child in context.pages:
-            if child not in old_pages:
-                child.close()
-        current = dashboard(page, guard)
-        if current is None or current['balance'] <= balance:
-            return result('needs_attention', '活动积分增长未确认，已停止后续操作', activities_completed=completed, searches_completed=searches)
-        completed += 1
-        balance = current['balance']
-        print(f'已确认第 {index} 项活动积分到账。', flush=True)
-    search_page = context.new_page()
-    for index, term in enumerate(terms, 1):
-        current = state(page)
-        if current is None:
-            return result('needs_attention', '积分状态读取失败，停止搜索', activities_completed=completed, searches_completed=searches)
-        if current['maximum'] == 0:
-            return result('needs_attention', '账号未显示可用桌面搜索积分额度，停止搜索', activities_completed=completed, searches_completed=searches)
-        if current['maximum'] is not None and current['maximum'] > 0 and current['progress'] is not None and current['progress'] >= current['maximum']:
-            print('桌面搜索额度已完成。', flush=True)
-            break
-        guard.check(full=True)
-        search_page.goto('https://www.bing.com/', wait_until='domcontentloaded', timeout=30000)
-        field = search_page.locator('#sb_form_q')
-        field.wait_for(state='visible', timeout=10000)
-        field.fill(term)
-        guard.check(full=True)
-        field.press('Enter')
-        search_page.wait_for_url(re.compile(r'^https://(?:www\.)?bing\.com/search\?'), timeout=30000)
-        pause(search_page, guard, options.interval)
-        current = dashboard(page, guard)
-        if current is None or current['balance'] <= balance:
-            return result('needs_attention', '搜索积分增长未确认，可能有冷却或页面变化；已停止后续搜索', activities_completed=completed, searches_completed=searches)
-        searches += 1
-        balance = current['balance']
-        print(f'已确认第 {index} 次搜索积分到账。', flush=True)
-    guard.check(full=True)
-    earned = balance - before['balance']
-    if earned > 0:
-        return result('success', f'已确认本次增加 {earned} 积分', credits=earned,
-            activities_completed=completed, searches_completed=searches)
-    if before['maximum'] is not None and before['maximum'] > 0 and before['progress'] is not None and before['progress'] >= before['maximum'] and not offers:
-        return result('already_completed', '桌面搜索额度已完成，未发现支持的未完成活动')
-    return result('needs_attention', '未确认新增积分；页面中其他任务请手动完成')
+            if quota[0] >= quota[1]:
+                search_reason = '当前搜索额度已完成'
+                break
+            if search_page is None:
+                search_page = context.new_page()
+            guard.check(full=True)
+            search_page.goto('https://www.bing.com/', wait_until='domcontentloaded', timeout=30000)
+            field = search_page.locator('#sb_form_q')
+            field.wait_for(state='visible', timeout=10000)
+            field.fill(term)
+            guard.check(full=True)
+            field.press('Enter')
+            search_page.wait_for_url(re.compile(r'^https://(?:www\.)?bing\.com/search\?'), timeout=30000)
+            pause(search_page, guard, options.interval)
+            updated = read_quota(page, guard)
+            if updated is not None and updated[0] == quota[0]:
+                # Rewards may credit asynchronously. Recheck once without issuing
+                # another search, then give up if the counter still did not move.
+                pause(page, guard, options.interval)
+                updated = read_quota(page, guard)
+            if updated is None or updated[0] <= quota[0]:
+                search_reason = '搜索积分增长未确认，跳过本轮剩余搜索'
+                break
+            quota = updated
+            searches += 1
+            search_reason = '当前搜索额度已完成' if quota[0] >= quota[1] else '已用完本轮搜索词或数量额度'
+    except NetworkBlocked:
+        raise
+    except Exception as error:
+        search_reason = f'搜索页面未完成（{type(error).__name__}），结束本轮搜索'
+    finally:
+        if search_page:
+            close_children(context, [page])
+    note('桌面搜索', 'completed' if quota and quota[0] >= quota[1] else 'skipped', search_reason)
+    # A quest may leave new pending credits. Claim once, never loop without progress.
+    if options.activities:
+        try:
+            claim_pending(page, guard, options)
+        except NetworkBlocked:
+            raise
+        except Exception:
+            note('领取积分', 'skipped', '领取入口未识别')
+    after = dashboard(page, guard)
+    earned = after['balance'] - before['balance'] if after else 0
+    completed = sum(item['status'] in ('completed', 'progress_confirmed') for item in ledger)
+    skipped = sum(item['status'] == 'skipped' for item in ledger)
+    outcome = result('success' if earned > 0 or completed else 'needs_attention',
+        f'本次确认增加 {earned} 积分；完成/推进 {completed} 项，跳过 {skipped} 项',
+        credits=earned, activities_completed=completed, searches_completed=searches,
+        search_progress=list(quota) if quota else None, tasks=ledger)
+    report = ROOT / 'data/rewards/last-run.json'
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(json.dumps(outcome, ensure_ascii=False, indent=2), encoding='utf-8')
+    return outcome
 
 
 def local_environment():

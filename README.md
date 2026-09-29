@@ -94,7 +94,13 @@ Copy-Item tasks/edge_rewards/queries.example.txt data/rewards/queries.txt
 notepad data/rewards/queries.txt
 ```
 
-在网页点击「扫描插件」，找到 **Edge Microsoft Rewards** 后手动运行。任务默认关闭定时；按需开启，默认时间为每天 10:00。默认每次最多搜索 10 个词，间隔 15 秒。任务只处理支持的可见搜索类积分活动；问答、拼图、移动端和其他活动需手动完成。积分增长未确认时停止后续操作。
+在网页点击「扫描插件」，找到 **Edge Microsoft Rewards** 后手动运行。任务默认关闭定时；按需开启，默认时间为每天 10:00。默认每次最多搜索 10 个词，间隔 15 秒，最多尝试 30 项活动。
+
+每次运行重新读取首页和赚取页的任务，根据当天页面处理搜索、浏览栏目、打开官方活动页面和简单任务的子步骤。已完成、尚未解锁、跨天等待以及需要安装应用、订阅、购买或兑换的任务会跳过。单项失败继续下一项；活动页面操作后立即关闭，搜索共用一个页面，运行结束关闭本任务的 Edge 窗口。
+
+问答只按已知问题与答案匹配，未知问题跳过。可以将 `tasks/edge_rewards/quiz-answers.example.json` 复制到本机 `data/rewards/quiz-answers.json`，按「问题：答案」补充内容。投票可以在运行环境变量 `REWARDS_POLL_OPTION` 中填写要选择的完整选项文字；留空时只打开活动并核对完成状态。
+
+搜索上限从当前积分明细读取，支持页面显示的加倍额度；达到上限、搜索词用完或等待一次后仍未确认增长，结束本轮搜索。结果只记录服务端确认的完成状态和实际余额变化，不保证每天领取所有积分。执行明细保存在本机 `data/rewards/last-run.json`，也可在网页查看任务结果和日志。
 
 | 运行环境变量 | 默认值 | 用途 |
 |---|---|---|
@@ -102,8 +108,9 @@ notepad data/rewards/queries.txt
 | `REWARDS_SEARCH_COUNT` | `10` | 每次桌面搜索数量，0 表示只处理活动 |
 | `REWARDS_SEARCH_INTERVAL` | `15` | 搜索后等待秒数，范围 10–120 |
 | `REWARDS_ACTION_WAIT` | `10` | 活动后等待秒数，范围 5–60 |
-| `REWARDS_MAX_ACTIVITIES` | `10` | 每次活动上限，0 表示只搜索 |
+| `REWARDS_MAX_ACTIVITIES` | `30` | 每次活动上限，范围 0–100；0 表示只搜索 |
 | `REWARDS_HEADLESS` | `false` | 是否隐藏任务运行时的浏览器窗口 |
+| `REWARDS_POLL_OPTION` | 空 | 投票时选择的完整选项文字，未匹配则跳过 |
 
 可单独运行 `--doctor` 检查网络，不访问微软网站。检查使用两个外部 IP 地区服务，分别核对可用的 IPv4 / IPv6 出口；查询失败、结果不一致或运行中网络变化均会停止任务。
 
