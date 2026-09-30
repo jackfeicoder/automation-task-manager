@@ -1,15 +1,38 @@
 param(
     [ValidateRange(1024, 65535)][int]$Port = 9222,
-    [string]$ProfileDirectory = ''
+    [string]$ProfileDirectory = '',
+    [switch]$Reuse
 )
 $ErrorActionPreference = 'Stop'
-$edgeCandidates = @(
+$edgeRegistered = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe',
+    'HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe',
+    'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe') | ForEach-Object {
+    if (Test-Path -LiteralPath $_) { (Get-Item -LiteralPath $_).GetValue('') }
+}
+$edgeCandidates = @($edgeRegistered) + @(
     (Join-Path ${env:ProgramFiles(x86)} 'Microsoft/Edge/Application/msedge.exe'),
     (Join-Path $env:ProgramFiles 'Microsoft/Edge/Application/msedge.exe'),
     (Join-Path $env:LOCALAPPDATA 'Microsoft/Edge/Application/msedge.exe')
 )
 $edgePath = $edgeCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 if (-not $edgePath) { throw 'Microsoft Edge is not installed.' }
+if ($Reuse) {
+    try {
+        $existingProbe = [System.Net.WebRequest]::Create("http://127.0.0.1:$Port/json/version")
+        $existingProbe.Proxy = $null
+        $existingProbe.Timeout = 1000
+        $existingResponse = $existingProbe.GetResponse()
+        try {
+            $existingReader = New-Object System.IO.StreamReader($existingResponse.GetResponseStream())
+            try { $existingVersion = $existingReader.ReadToEnd() | ConvertFrom-Json }
+            finally { $existingReader.Dispose() }
+            if ($existingVersion.'User-Agent' -match 'Edg/' -and $existingVersion.webSocketDebuggerUrl -like "ws://127.0.0.1:$Port/devtools/browser/*") {
+                Write-Host "Desktop Edge connection is already ready at port $Port."
+                return
+            }
+        } finally { $existingResponse.Dispose() }
+    } catch { }
+}
 $edgeData = Join-Path $env:LOCALAPPDATA 'Microsoft/Edge/User Data'
 if (-not (Test-Path -LiteralPath $edgeData -PathType Container)) {
     throw 'The desktop Edge profile was not found. Open Edge normally and sign in first.'

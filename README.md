@@ -87,7 +87,7 @@ cd automation-task-manager
 
 任务默认使用当前网络，VPN、Windows 系统代理、WinHTTP 代理和出口地区不会阻止启动。需要启用直接网络检查时，在「运行环境」设置 `REWARDS_REQUIRE_DIRECT_NETWORK=true`，并按实际所在地区设置 `REWARDS_COUNTRY_CODE`。
 
-连接桌面 Edge：先完全退出 Edge（包括后台进程），然后在项目目录运行：
+连接桌面 Edge：Edge 没有运行时，任务会自动打开原有浏览器配置并建立本机连接。已经按普通方式打开的 Edge 需要先保存页面并退出一次，再运行任务；任务会自动重新打开。也可以手动启动：
 
 ```powershell
 ./scripts/start_edge.ps1
@@ -95,7 +95,15 @@ cd automation-task-manager
 
 启动脚本打开已安装的桌面 Edge，使用原来的 `User Data` 目录及最近使用的配置，复用该配置中的微软登录信息。自动化连接仅使用本机 `127.0.0.1:9222`。任务在这个 Edge 中新建工作页面，结束后关闭自己的页面并断开连接，保留浏览器及原有页面。
 
-多个 Edge 配置时，可以显式选择已经登录的配置，例如 `./scripts/start_edge.ps1 -ProfileDirectory "Profile 1"`。关闭 Edge 后，下次运行任务前仍需用该启动脚本打开 Edge；已经按此方式打开时直接运行任务即可。
+多个 Edge 配置时，可以显式选择已经登录的配置，例如 `./scripts/start_edge.ps1 -ProfileDirectory "Profile 1"`。关闭 Edge 后下次运行任务会自动打开；已经连接时直接复用。
+
+创建桌面的 **Edge Rewards** 启动入口：
+
+```powershell
+./scripts/create_edge_shortcut.ps1
+```
+
+双击该入口，使用原有 Edge 配置建立连接；连接已经开放时复用现有浏览器。普通 Edge 窗口还在运行时会显示退出提示，保留现有页面供用户先保存。自动启动通过桌面会话启动浏览器，停止任务时只关闭任务页面，浏览器继续运行。安装路径支持标准目录和 Windows 注册的自定义路径。
 
 可以创建本机搜索词文件，每行填写一个需要查询的内容；不创建时任务会自动使用仓库内的三个非敏感示例词：
 

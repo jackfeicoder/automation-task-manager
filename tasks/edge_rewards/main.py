@@ -15,11 +15,11 @@ from urllib.parse import urlencode, urlsplit
 
 if __package__:
     from .network_guard import NetworkBlocked, NetworkGuard
-    from .desktop_browser import attach, endpoint_url, probe_desktop_edge
+    from .desktop_browser import attach, endpoint_url, probe_desktop_edge, edge_executable
     from .page_tasks import EARN_PAGE, discover, explore_term, find_card, identity, quota_text
 else:
     from network_guard import NetworkBlocked, NetworkGuard
-    from desktop_browser import attach, endpoint_url, probe_desktop_edge
+    from desktop_browser import attach, endpoint_url, probe_desktop_edge, edge_executable
     from page_tasks import EARN_PAGE, discover, explore_term, find_card, identity, quota_text
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,21 +34,6 @@ MICROSOFT_HOSTS = ('bing.com', 'bing.net', 'microsoft.com', 'microsoftonline.com
 
 def result(status, message, **data):
     return {'status': status, 'message': message, 'data': data}
-
-
-def edge_executable():
-    if os.name != 'nt':
-        raise ValueError('Rewards 插件需要 Windows 和 Microsoft Edge')
-    drive = os.environ.get('SYSTEMDRIVE', 'C:')
-    roots = [os.environ.get('LOCALAPPDATA'), os.environ.get('PROGRAMFILES(X86)'),
-             os.environ.get('PROGRAMFILES'), os.environ.get('PROGRAMW6432'),
-             drive + '/Program Files (x86)', drive + '/Program Files']
-    for root in roots:
-        if root:
-            path = Path(root) / 'Microsoft/Edge/Application/msedge.exe'
-            if path.is_file():
-                return str(path)
-    raise ValueError('未找到已安装的 Microsoft Edge；请先安装 Edge 后重跑')
 
 
 def browser_failure(error, stage):

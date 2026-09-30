@@ -1,7 +1,7 @@
 {
   "id": "edge-rewards",
   "name": "Edge Microsoft Rewards",
-  "description": "复用桌面 Edge 的登录信息执行当天搜索和简单活动，仅关闭任务页面；默认允许 VPN 和代理。首次用 start_edge.ps1 打开桌面 Edge。",
+  "description": "复用桌面 Edge 的原有登录信息执行当天任务；Edge 未运行时自动打开连接，只关闭任务页面。普通方式已打开的 Edge 请先保存页面并退出一次。",
   "enabled": false,
   "command": ["{python}", "main.py", "--run"],
   "cwd": "tasks/edge_rewards",
